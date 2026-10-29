@@ -35,6 +35,7 @@ export interface CookieStorageStats {
 const COOKIE_META_KEY = 'vidix_proj_meta';
 const COOKIE_CHUNK_PREFIX = 'vidix_proj_c';
 const COOKIE_ACTIVE_ID_KEY = 'vidix_active_id';
+const COOKIE_CONSENT_KEY = 'vidix_cookie_consent';
 const CHUNK_SIZE = 3200; // Safe margin below browser 4096-byte per-cookie limit
 const MAX_COOKIE_CHUNKS = 32;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
@@ -720,10 +721,26 @@ export function createDefaultUserProjects(): UserProject[] {
   ];
 }
 
+export function hasAcceptedCookies(): boolean {
+  const cookies = getRawCookieMap();
+  return cookies[COOKIE_CONSENT_KEY] === 'accepted';
+}
+
+export function acceptCookiesAndSave(
+  projects: UserProject[],
+  activeProjectId?: string
+): CookieStorageStats {
+  setRawCookie(COOKIE_CONSENT_KEY, 'accepted');
+  return saveProjectsToCookies(projects, activeProjectId);
+}
+
 export function saveProjectsToCookies(
   projects: UserProject[],
   activeProjectId?: string
 ): CookieStorageStats {
+  if (typeof document !== 'undefined' && !hasAcceptedCookies()) {
+    return getCookieStorageStats(projects.length);
+  }
   const json = JSON.stringify(projects);
   const encoded = encodePayloadForCookie(json);
 

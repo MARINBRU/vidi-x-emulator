@@ -19,9 +19,11 @@ import {
   DEFAULT_STARTER_PYTHON,
   PreMadeProject,
   UserProject,
+  acceptCookiesAndSave,
   createStarterBlockProgram,
   getActiveProjectIdFromCookie,
   getCookieStorageStats,
+  hasAcceptedCookies,
   loadProjectsFromCookies,
   saveProjectsToCookies,
   setActiveProjectIdCookie,
@@ -57,6 +59,9 @@ export function App() {
   });
   const [cookieStats, setCookieStats] = useState<CookieStorageStats>(() =>
     getCookieStorageStats(loadProjectsFromCookies().length)
+  );
+  const [cookiesAccepted, setCookiesAccepted] = useState<boolean>(() =>
+    hasAcceptedCookies()
   );
 
   const clusterRef = useRef<VidiXClusterManager | null>(null);
@@ -854,6 +859,45 @@ export function App() {
       </main>
 
       {/* Bottom Status Bar (Hidden on Home Screen) */}
+      {!cookiesAccepted && (
+        <div
+          className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cookie-consent-title"
+        >
+          <div className="w-full max-w-md bg-[#18181b] border border-zinc-600 p-5 text-zinc-200 shadow-2xl">
+            <h2
+              id="cookie-consent-title"
+              className="text-sm font-semibold text-zinc-100 mb-2"
+            >
+              Cookie Storage Notice
+            </h2>
+            <p className="text-xs text-zinc-300 leading-relaxed mb-4">
+              This website uses browser cookies to store your saved C++, Python,
+              and Block projects locally on your device. No tracking or third-party
+              advertising cookies are used. Please accept cookies to enable project
+              saving.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  const stats = acceptCookiesAndSave(
+                    userProjects,
+                    activeProjectId
+                  );
+                  setCookieStats(stats);
+                  setCookiesAccepted(true);
+                }}
+                className="px-3.5 py-1.5 bg-zinc-200 hover:bg-white text-zinc-900 font-medium text-xs cursor-pointer"
+              >
+                Accept Cookies
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab !== 'home' && (
         <footer className="h-6 px-3 bg-[#18181b] border-t border-zinc-800 flex items-center justify-between text-[11px] text-zinc-400 shrink-0 z-30">
           <div className="flex items-center gap-4">
