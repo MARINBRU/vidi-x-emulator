@@ -7,25 +7,35 @@ echo " Domain: marinbrusic.from.hr/vidix-emulator"
 echo "============================================================"
 
 # 1. Install system packages (git, curl, nginx, ufw)
-echo "[1/6] Installing system packages (git, curl, nginx, ufw)..."
+echo "[1/7] Installing system packages (git, curl, nginx, ufw)..."
 sudo apt-get update -y
 sudo apt-get upgrade -y
 sudo apt-get install -y git curl ca-certificates nginx ufw
 
 # 2. Install Node.js 22 LTS if not already installed
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d 'v')" -lt 20 ]]; then
-  echo "[2/6] Installing Node.js 22 LTS..."
+  echo "[2/7] Installing Node.js 22 LTS..."
   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   sudo apt-get install -y nodejs
 else
-  echo "[2/6] Node.js $(node -v) already installed."
+  echo "[2/7] Node.js $(node -v) already installed."
 fi
 
-# 3. Ensure we are in the repo directory and on the right branch, then build
+# 3. Install Cloudflare Tunnel (cloudflared) automatically
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "[3/7] Installing Cloudflare Tunnel (cloudflared)..."
+  curl -fsSL --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+  sudo dpkg -i /tmp/cloudflared.deb
+  rm -f /tmp/cloudflared.deb
+else
+  echo "[3/7] cloudflared already installed."
+fi
+
+# 4. Ensure we are in the repo directory and on the right branch, then build
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "[3/6] Fetching latest code and building production bundle..."
+echo "[4/7] Fetching latest code and building production bundle..."
 git fetch origin
 git checkout arena/92418b6e-vidi-x-emulator
 git pull origin arena/92418b6e-vidi-x-emulator
@@ -33,8 +43,8 @@ git pull origin arena/92418b6e-vidi-x-emulator
 npm install --legacy-peer-deps
 npm run build
 
-# 4. Copy static build into /var/www/html/vidix-emulator
-echo "[4/6] Deploying static bundle to /var/www/html/vidix-emulator..."
+# 5. Copy static build into /var/www/html/vidix-emulator
+echo "[5/7] Deploying static bundle to /var/www/html/vidix-emulator..."
 sudo mkdir -p /var/www/html/vidix-emulator
 sudo rm -rf /var/www/html/vidix-emulator/*
 sudo cp -r "$SCRIPT_DIR/dist/"* /var/www/html/vidix-emulator/
@@ -65,8 +75,8 @@ fi
 sudo chown -R www-data:www-data /var/www/html
 sudo chmod -R 755 /var/www/html
 
-# 5. Configure Nginx for / and /vidix-emulator/
-echo "[5/6] Configuring Nginx..."
+# 6. Configure Nginx for / and /vidix-emulator/
+echo "[6/7] Configuring Nginx..."
 sudo tee /etc/nginx/sites-available/default > /dev/null << 'EOF'
 server {
     listen 80 default_server;
@@ -97,17 +107,13 @@ sudo nginx -t
 sudo systemctl enable --now nginx
 sudo systemctl restart nginx
 
-# 6. Enable UFW firewall (allow SSH on 22 if OpenSSH is currently being used for setup)
-echo "[6/6] Configuring UFW firewall..."
+# 7. Enable UFW firewall (block all incoming ports, allow outgoing)
+echo "[7/7] Locking down UFW firewall..."
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-if systemctl is-active --quiet ssh || systemctl is-active --quiet sshd; then
-  sudo ufw allow 22/tcp
-fi
 sudo ufw --force enable
 
 echo "============================================================"
-echo " DONE! VIDI X Emulator is built and running on port 80."
-echo " Local test: curl -I http://localhost/vidix-emulator/"
-echo " Next step: Run your Cloudflare Tunnel install command."
+echo " DONE! Everything in Part 3 is installed and running."
+echo " cloudflared is also pre-installed for Part 4."
 echo "============================================================"
