@@ -131,6 +131,9 @@ server {
     root /var/www/html;
     index index.html;
 
+    client_header_buffer_size 64k;
+    large_client_header_buffers 8 64k;
+
     gzip on;
     gzip_types text/plain text/css application/javascript application/json image/svg+xml;
 

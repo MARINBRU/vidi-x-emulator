@@ -629,8 +629,17 @@ function setRawCookie(name: string, value: string, maxAge = COOKIE_MAX_AGE): voi
 function deleteRawCookie(name: string): void {
   if (typeof document !== 'undefined') {
     document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
+    document.cookie = `${name}=; path=/vidix-emulator; max-age=0; SameSite=Lax`;
+    document.cookie = `${name}=; path=/vidix-emulator/; max-age=0; SameSite=Lax`;
   } else {
     delete fallbackCookieJar[name];
+  }
+}
+
+function purgeLegacyLargeCookies(): void {
+  if (typeof document === 'undefined') return;
+  for (let i = 0; i < MAX_COOKIE_CHUNKS + 8; i++) {
+    deleteRawCookie(`${COOKIE_CHUNK_PREFIX}${i}`);
   }
 }
 
@@ -738,58 +747,66 @@ export function saveProjectsToCookies(
   projects: UserProject[],
   activeProjectId?: string
 ): CookieStorageStats {
-  if (typeof document !== 'undefined' && !hasAcceptedCookies()) {
-    return getCookieStorageStats(projects.length);
-  }
   const json = JSON.stringify(projects);
-  const encoded = encodePayloadForCookie(json);
 
-  const chunks: string[] = [];
-  for (let i = 0; i < encoded.length; i += CHUNK_SIZE) {
-    chunks.push(encoded.slice(i, i + CHUNK_SIZE));
-  }
-
-  const storedChunkCount = Math.min(chunks.length, MAX_COOKIE_CHUNKS);
-
-  // Write chunks to document.cookie
-  for (let i = 0; i < storedChunkCount; i++) {
-    setRawCookie(`${COOKIE_CHUNK_PREFIX}${i}`, chunks[i]);
-  }
-
-  // Clean up any old trailing cookie chunks
-  const existingCookies = getRawCookieMap();
-  for (let i = storedChunkCount; i < MAX_COOKIE_CHUNKS + 8; i++) {
-    if (existingCookies[`${COOKIE_CHUNK_PREFIX}${i}`] !== undefined) {
-      deleteRawCookie(`${COOKIE_CHUNK_PREFIX}${i}`);
-    }
-  }
-
-  const now = Date.now();
-  lastCookieSaveTimestamp = now;
-  setRawCookie(
-    COOKIE_META_KEY,
-    encodeURIComponent(
-      JSON.stringify({
-        v: 1,
-        chunks: storedChunkCount,
-        totalLen: encoded.length,
-        overflow: chunks.length > MAX_COOKIE_CHUNKS,
-        savedAt: now,
-      })
-    )
-  );
-
-  if (activeProjectId) {
-    setRawCookie(COOKIE_ACTIVE_ID_KEY, encodeURIComponent(activeProjectId));
-  }
-
-  // Also keep a backup in localStorage if available in case total project code exceeds cookie jar limits
+  // Always save full project code in localStorage when in a browser so HTTP Cookie headers stay < 120 bytes
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(OVERFLOW_STORAGE_KEY, json);
     }
   } catch {
-    // Ignore storage quota errors
+    // Ignore quota errors
+  }
+
+  // Purge any old multi-KB cookie chunks so Nginx never sees a large Cookie header
+  purgeLegacyLargeCookies();
+
+  if (typeof document !== 'undefined' && !hasAcceptedCookies()) {
+    return getCookieStorageStats(projects.length);
+  }
+
+  const now = Date.now();
+  lastCookieSaveTimestamp = now;
+
+  if (typeof document === 'undefined') {
+    // In Node/SSR test environment without localStorage, keep in-memory fallback chunked jar
+    const encoded = encodePayloadForCookie(json);
+    const chunks: string[] = [];
+    for (let i = 0; i < encoded.length; i += CHUNK_SIZE) {
+      chunks.push(encoded.slice(i, i + CHUNK_SIZE));
+    }
+    const storedChunkCount = Math.min(chunks.length, MAX_COOKIE_CHUNKS);
+    for (let i = 0; i < storedChunkCount; i++) {
+      setRawCookie(`${COOKIE_CHUNK_PREFIX}${i}`, chunks[i]);
+    }
+    setRawCookie(
+      COOKIE_META_KEY,
+      encodeURIComponent(
+        JSON.stringify({
+          v: 2,
+          chunks: storedChunkCount,
+          totalLen: json.length,
+          savedAt: now,
+        })
+      )
+    );
+  } else {
+    // In browser: store only a tiny metadata cookie (< 80 bytes) so HTTP headers stay tiny
+    setRawCookie(
+      COOKIE_META_KEY,
+      encodeURIComponent(
+        JSON.stringify({
+          v: 2,
+          count: projects.length,
+          totalLen: json.length,
+          savedAt: now,
+        })
+      )
+    );
+  }
+
+  if (activeProjectId) {
+    setRawCookie(COOKIE_ACTIVE_ID_KEY, encodeURIComponent(activeProjectId));
   }
 
   return getCookieStorageStats(projects.length);
@@ -885,68 +902,62 @@ export function loadProjectsFromCookies(): UserProject[] {
   const cookies = getRawCookieMap();
   const rawMeta = cookies[COOKIE_META_KEY];
 
-  if (rawMeta) {
-    try {
-      const meta = JSON.parse(decodeURIComponent(rawMeta)) as {
-        chunks: number;
-        overflow?: boolean;
-        savedAt?: number;
-      };
-      if (meta.savedAt) {
-        lastCookieSaveTimestamp = meta.savedAt;
-      }
-
-      if (meta.overflow && typeof localStorage !== 'undefined') {
-        const backup = localStorage.getItem(OVERFLOW_STORAGE_KEY);
-        if (backup) {
-          const parsed = JSON.parse(backup) as UserProject[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const { cleaned, changed } = sanitizeLoadedProjects(parsed);
-            if (changed) saveProjectsToCookies(cleaned, cleaned[0].id);
-            return cleaned;
-          }
-        }
-      }
-
-      let combined = '';
-      for (let i = 0; i < (meta.chunks || 0); i++) {
-        const part = cookies[`${COOKIE_CHUNK_PREFIX}${i}`];
-        if (part === undefined) {
-          throw new Error(`Missing cookie chunk ${i}`);
-        }
-        combined += part;
-      }
-
-      if (combined) {
-        const json = decodePayloadFromCookie(combined);
-        const parsed = JSON.parse(json) as UserProject[];
+  // 1. Prefer localStorage payload in browser environments, then immediately purge legacy large cookie chunks
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const backup = localStorage.getItem(OVERFLOW_STORAGE_KEY);
+      if (backup) {
+        purgeLegacyLargeCookies();
+        const parsed = JSON.parse(backup) as UserProject[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           const { cleaned, changed } = sanitizeLoadedProjects(parsed);
           if (changed) saveProjectsToCookies(cleaned, cleaned[0].id);
           return cleaned;
         }
       }
-    } catch {
-      // Fall through to localStorage backup or default initialization
-    }
-  }
-
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const backup = localStorage.getItem(OVERFLOW_STORAGE_KEY);
-      if (backup) {
-        const parsed = JSON.parse(backup) as UserProject[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const { cleaned } = sanitizeLoadedProjects(parsed);
-          saveProjectsToCookies(cleaned, cleaned[0].id);
-          return cleaned;
-        }
-      }
     }
   } catch {
-    // Ignore
+    // Fall through
   }
 
+  // 2. Migrate any legacy chunked cookies into localStorage and delete the chunks
+  if (rawMeta) {
+    try {
+      const meta = JSON.parse(decodeURIComponent(rawMeta)) as {
+        chunks?: number;
+        savedAt?: number;
+      };
+      if (meta.savedAt) {
+        lastCookieSaveTimestamp = meta.savedAt;
+      }
+
+      if (meta.chunks && meta.chunks > 0) {
+        let combined = '';
+        for (let i = 0; i < meta.chunks; i++) {
+          const part = cookies[`${COOKIE_CHUNK_PREFIX}${i}`];
+          if (part === undefined) {
+            throw new Error(`Missing cookie chunk ${i}`);
+          }
+          combined += part;
+        }
+
+        if (combined) {
+          const json = decodePayloadFromCookie(combined);
+          const parsed = JSON.parse(json) as UserProject[];
+          purgeLegacyLargeCookies();
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const { cleaned } = sanitizeLoadedProjects(parsed);
+            saveProjectsToCookies(cleaned, cleaned[0].id);
+            return cleaned;
+          }
+        }
+      }
+    } catch {
+      purgeLegacyLargeCookies();
+    }
+  }
+
+  purgeLegacyLargeCookies();
   const defaults = createDefaultUserProjects();
   saveProjectsToCookies(defaults, defaults[0].id);
   return defaults;
@@ -966,6 +977,18 @@ export function getCookieStorageStats(knownProjectCount?: number): CookieStorage
   const cookies = getRawCookieMap();
   let chunkCount = 0;
   let totalBytes = 0;
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem(OVERFLOW_STORAGE_KEY);
+      if (stored) {
+        totalBytes = stored.length;
+        chunkCount = 1;
+      }
+    }
+  } catch {
+    // Ignore
+  }
 
   for (const [k, v] of Object.entries(cookies)) {
     if (
