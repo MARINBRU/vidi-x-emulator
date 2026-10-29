@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LocalShare — Local Network File Sharing</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #141416;
+      color: #e4e4e7;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      min-height: 100vh;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    header {
+      background: #18181b;
+      border-bottom: 1px solid #27272a;
+      padding: 12px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f4f4f5;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 2px 7px;
+      background: #27272a;
+      border: 1px solid #3f3f46;
+      color: #d4d4d8;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #71717a;
+      margin-right: 5px;
+    }
+    .status-dot.online {
+      background: #22c55e;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .panel {
+      background: #1c1c1f;
+      border: 1px solid #27272a;
+      padding: 16px;
+    }
+    .panel-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #27272a;
+    }
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f4f4f5;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    input[type="text"] {
+      background: #111113;
+      border: 1px solid #3f3f46;
+      color: #f4f4f5;
+      padding: 6px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+    input[type="text"]:focus {
+      border-color: #a1a1aa;
+    }
+    button, .btn {
+      background: #27272a;
+      border: 1px solid #3f3f46;
+      color: #f4f4f5;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    button:hover, .btn:hover {
+      background: #323238;
+    }
+    button.primary, .btn.primary {
+      background: #e4e4e7;
+      border-color: #f4f4f5;
+      color: #18181b;
+      font-weight: 600;
+    }
+    button.primary:hover, .btn.primary:hover {
+      background: #ffffff;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .devices-list {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #27272a;
+      background: #161618;
+    }
+    .device-row {
+      padding: 12px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #27272a;
+    }
+    .device-row:last-child {
+      border-bottom: none;
+    }
+    .device-row.drag-over {
+      background: #27272a;
+      outline: 1px dashed #a1a1aa;
+    }
+    .device-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .device-name {
+      font-weight: 600;
+      color: #f4f4f5;
+      font-size: 13px;
+    }
+    .empty-state {
+      padding: 28px 16px;
+      text-align: center;
+      color: #a1a1aa;
+      font-size: 12px;
+    }
+    .dropzone {
+      border: 1px dashed #3f3f46;
+      background: #141416;
+      padding: 18px;
+      text-align: center;
+      color: #a1a1aa;
+      margin-top: 12px;
+      cursor: pointer;
+    }
+    .dropzone.drag-over {
+      border-color: #e4e4e7;
+      background: #1f1f23;
+      color: #f4f4f5;
+    }
+    .transfer-item {
+      border: 1px solid #27272a;
+      background: #141416;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .transfer-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .progress-track {
+      width: 100%;
+      height: 6px;
+      background: #27272a;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: #e4e4e7;
+      width: 0%;
+      transition: width 0.1s linear;
+    }
+    .muted {
+      color: #a1a1aa;
+      font-size: 11px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 64px;
+      background: #111113;
+      border: 1px solid #3f3f46;
+      color: #f4f4f5;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+    }
+    textarea:focus {
+      border-color: #a1a1aa;
+    }
+    label.checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #d4d4d8;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <span class="title">LocalShare</span>
+      <span class="badge mono" id="connStatusBadge">
+        <span class="status-dot" id="connDot"></span>
+        <span id="connText">Connecting...</span>
+      </span>
+      <span class="badge mono" id="roomBadge">LAN Room: ---</span>
+    </div>
+    <div class="row">
+      <a href="/" class="btn">Home</a>
+      <a href="/vidix-emulator/" class="btn">VIDI X Emulator</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 1. Your Device & Network Room Settings -->
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Your Device on This Network</div>
+          <div class="muted">Other devices on the same Wi-Fi / LAN see you under this name.</div>
+        </div>
+        <div class="row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoDownloadToggle" checked />
+            Auto-download incoming files
+          </label>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content: space-between;">
+        <div class="row">
+          <span class="muted">Device Name:</span>
+          <input type="text" id="deviceNameInput" maxlength="32" style="width: 190px;" />
+          <button id="saveNameBtn">Save Name</button>
+          <span class="badge mono" id="myDeviceTypeBadge">Desktop</span>
+        </div>
+
+        <div class="row">
+          <span class="muted" title="Leave blank to automatically group with devices on your same Wi-Fi / public IP. Enter a code if a device is on mobile data.">
+            Optional Room Code:
+          </span>
+          <input
+            type="text"
+            id="customRoomInput"
+            placeholder="Auto (Same Wi-Fi)"
+            maxlength="20"
+            style="width: 140px;"
+          />
+          <button id="joinRoomBtn">Apply</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Devices Currently Online on Your Local Network -->
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">
+            Devices on Your Local Network (<span id="peerCount">0</span>)
+          </div>
+          <div class="muted">
+            Open <strong>marinbrusic.from.hr/localshare</strong> on any phone, laptop, or PC on your network.
+          </div>
+        </div>
+
+        <div class="row">
+          <input type="file" id="fileInputSingle" multiple style="display: none;" />
+          <input type="file" id="fileInputBroadcast" multiple style="display: none;" />
+          <button class="primary" id="broadcastFilesBtn" disabled>
+            Send File(s) to All Devices
+          </button>
+        </div>
+      </div>
+
+      <div class="devices-list" id="devicesList">
+        <div class="empty-state">
+          No other devices detected on this network yet.<br />
+          Open this page on another device connected to the same Wi-Fi / LAN.
+        </div>
+      </div>
+
+      <div class="dropzone" id="broadcastDropzone">
+        Click or drag &amp; drop files here to send to <strong>All Connected Devices</strong> on your network
+      </div>
+    </section>
+
+    <!-- 3. Instant Text / Link Broadcast -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Share Text or Link</div>
+        <div class="row">
+          <select
+            id="textTargetSelect"
+            style="background: #111113; border: 1px solid #3f3f46; color: #f4f4f5; padding: 5px 8px; font-size: 12px;"
+          >
+            <option value="ALL">All Devices on Network</option>
+          </select>
+          <button class="primary" id="sendTextBtn" disabled>Send Text</button>
+        </div>
+      </div>
+      <textarea
+        id="textShareInput"
+        placeholder="Paste a URL, command, or note to send to another device..."
+      ></textarea>
+    </section>
+
+    <!-- 4. Active & Completed File / Text Transfers -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Transfers &amp; Received Items</div>
+        <button id="clearTransfersBtn">Clear History</button>
+      </div>
+      <div id="transfersList">
+        <div class="empty-state">No file or text transfers yet.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      const CHUNK_BYTE_SIZE = 49152; // 48 KB per chunk (fits comfortably in WebRTC & WS frames)
+      const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+      function detectDeviceType() {
+        const ua = navigator.userAgent || '';
+        if (/Android/i.test(ua)) return 'Android';
+        if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
+        if (/Mac/i.test(ua)) return 'Mac';
+        if (/Win/i.test(ua)) return 'Windows';
+        if (/Linux/i.test(ua)) return 'Linux';
+        return 'Device';
+      }
+
+      function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+      }
+
+      function arrayBufferToBase64(buf) {
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const step = 0x8000;
+        for (let i = 0; i < bytes.length; i += step) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+        }
+        return btoa(binary);
+      }
+
+      function base64ToUint8Array(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) {
+          out[i] = bin.charCodeAt(i);
+        }
+        return out;
+      }
+
+      const myDeviceType = detectDeviceType();
+      const storedName = localStorage.getItem('localshare_device_name');
+      let myDeviceName =
+        storedName ||
+        myDeviceType + ' #' + Math.floor(100 + Math.random() * 900);
+      let customRoom = localStorage.getItem('localshare_custom_room') || '';
+
+      const deviceNameInput = document.getElementById('deviceNameInput');
+      const saveNameBtn = document.getElementById('saveNameBtn');
+      const myDeviceTypeBadge = document.getElementById('myDeviceTypeBadge');
+      const customRoomInput = document.getElementById('customRoomInput');
+      const joinRoomBtn = document.getElementById('joinRoomBtn');
+      const connDot = document.getElementById('connDot');
+      const connText = document.getElementById('connText');
+      const roomBadge = document.getElementById('roomBadge');
+      const peerCountEl = document.getElementById('peerCount');
+      const devicesListEl = document.getElementById('devicesList');
+      const fileInputSingle = document.getElementById('fileInputSingle');
+      const fileInputBroadcast = document.getElementById('fileInputBroadcast');
+      const broadcastFilesBtn = document.getElementById('broadcastFilesBtn');
+      const broadcastDropzone = document.getElementById('broadcastDropzone');
+      const textTargetSelect = document.getElementById('textTargetSelect');
+      const textShareInput = document.getElementById('textShareInput');
+      const sendTextBtn = document.getElementById('sendTextBtn');
+      const transfersListEl = document.getElementById('transfersList');
+      const clearTransfersBtn = document.getElementById('clearTransfersBtn');
+      const autoDownloadToggle = document.getElementById('autoDownloadToggle');
+
+      deviceNameInput.value = myDeviceName;
+      myDeviceTypeBadge.textContent = myDeviceType;
+      customRoomInput.value = customRoom;
+
+      let ws = null;
+      let selfId = '';
+      let peers = [];
+      let selectedSinglePeerId = null;
+      let hasTransferItems = false;
+
+      // Active incoming file states: Map<transferId, IncomingState>
+      const incomingFiles = new Map();
+      // Pending outgoing ACK resolvers: Map<transferId_chunkIndex, () => void>
+      const pendingAckResolvers = new Map();
+      // Active WebRTC connections: Map<peerId, { pc, dc, ready }>
+      const rtcPeers = new Map();
+
+      function getWsUrl() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const basePath = location.pathname.startsWith('/localshare')
+          ? '/localshare/ws'
+          : '/ws';
+        const q = customRoom ? '?room=' + encodeURIComponent(customRoom) : '';
+        return proto + '//' + location.host + basePath + q;
+      }
+
+      function connectWs() {
+        if (ws) {
+          try {
+            ws.close();
+          } catch {}
+        }
+        connDot.classList.remove('online');
+        connText.textContent = 'Connecting...';
+
+        ws = new WebSocket(getWsUrl());
+
+        ws.onopen = function () {
+          connDot.classList.add('online');
+          connText.textContent = 'Connected';
+          wsSend({
+            type: 'hello',
+            name: myDeviceName,
+            deviceType: myDeviceType,
+            room: customRoom,
+          });
+        };
+
+        ws.onmessage = function (ev) {
+          let msg;
+          try {
+            msg = JSON.parse(ev.data);
+          } catch {
+            return;
+          }
+          handleServerMessage(msg);
+        };
+
+        ws.onclose = function () {
+          connDot.classList.remove('online');
+          connText.textContent = 'Reconnecting...';
+          setTimeout(connectWs, 2000);
+        };
+      }
+
+      function wsSend(obj) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(obj));
+        }
+      }
+
+      // Keep WebSocket alive through Cloudflare proxy (ping every 25s)
+      setInterval(function () {
+        wsSend({ type: 'ping' });
+      }, 25000);
+
+      function handleServerMessage(msg) {
+        switch (msg.type) {
+          case 'peers': {
+            selfId = msg.selfId || selfId;
+            peers = Array.isArray(msg.peers) ? msg.peers : [];
+            roomBadge.textContent =
+              (msg.roomMode === 'custom' ? 'Room: ' : 'LAN ID: ') +
+              (msg.roomId || 'LOCAL');
+            renderPeers();
+            break;
+          }
+          case 'signal': {
+            handleRtcSignal(msg);
+            break;
+          }
+          case 'relay-meta': {
+            handleIncomingFileMeta(msg);
+            break;
+          }
+          case 'relay-chunk': {
+            handleIncomingFileChunk(msg);
+            break;
+          }
+          case 'relay-ack': {
+            const key = msg.transferId + ':' + msg.chunkIndex;
+            const resolve = pendingAckResolvers.get(key);
+            if (resolve) {
+              pendingAckResolvers.delete(key);
+              resolve();
+            }
+            break;
+          }
+          case 'relay-end': {
+            handleIncomingFileEnd(msg);
+            break;
+          }
+          case 'text-share': {
+            handleIncomingText(msg);
+            break;
+          }
+        }
+      }
+
+      function renderPeers() {
+        peerCountEl.textContent = String(peers.length);
+        broadcastFilesBtn.disabled = peers.length === 0;
+        sendTextBtn.disabled = peers.length === 0;
+
+        // Update text target dropdown
+        const prevTarget = textTargetSelect.value;
+        textTargetSelect.innerHTML =
+          '<option value="ALL">All Devices on Network (' +
+          peers.length +
+          ')</option>';
+        peers.forEach(function (p) {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name + ' (' + p.deviceType + ')';
+          textTargetSelect.appendChild(opt);
+        });
+        if (
+          prevTarget === 'ALL' ||
+          peers.some(function (p) {
+            return p.id === prevTarget;
+          })
+        ) {
+          textTargetSelect.value = prevTarget;
+        }
+
+        if (peers.length === 0) {
+          devicesListEl.innerHTML =
+            '<div class="empty-state">' +
+            'No other devices detected on this network yet.<br />' +
+            'Open <strong>' +
+            location.origin +
+            location.pathname +
+            '</strong> on another device connected to the same Wi-Fi / LAN.' +
+            '</div>';
+          return;
+        }
+
+        devicesListEl.innerHTML = '';
+        peers.forEach(function (peer) {
+          const row = document.createElement('div');
+          row.className = 'device-row';
+
+          const info = document.createElement('div');
+          info.className = 'device-info';
+
+          const dot = document.createElement('span');
+          dot.className = 'status-dot online';
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'device-name';
+          nameSpan.textContent = peer.name;
+
+          const typeBadge = document.createElement('span');
+          typeBadge.className = 'badge mono';
+          typeBadge.textContent = peer.deviceType || 'Device';
+
+          info.appendChild(dot);
+          info.appendChild(nameSpan);
+          info.appendChild(typeBadge);
+
+          const actions = document.createElement('div');
+          actions.className = 'row';
+
+          const sendBtn = document.createElement('button');
+          sendBtn.className = 'primary';
+          sendBtn.textContent = 'Send File(s)';
+          sendBtn.onclick = function () {
+            selectedSinglePeerId = peer.id;
+            fileInputSingle.value = '';
+            fileInputSingle.click();
+          };
+
+          const textBtn = document.createElement('button');
+          textBtn.textContent = 'Send Text';
+          textBtn.onclick = function () {
+            textTargetSelect.value = peer.id;
+            textShareInput.focus();
+          };
+
+          actions.appendChild(sendBtn);
+          actions.appendChild(textBtn);
+
+          // Drag & drop directly onto a specific device row
+          row.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            row.classList.add('drag-over');
+          });
+          row.addEventListener('dragleave', function () {
+            row.classList.remove('drag-over');
+          });
+          row.addEventListener('drop', function (e) {
+            e.preventDefault();
+            row.classList.remove('drag-over');
+            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+              sendFilesToTargets(Array.from(e.dataTransfer.files), [peer.id]);
+            }
+          });
+
+          row.appendChild(info);
+          row.appendChild(actions);
+          devicesListEl.appendChild(row);
+        });
+      }
+
+      // ======================================================================
+      // WebRTC P2P Channel + Automatic In-Memory WebSocket Chunk Fallback
+      // ======================================================================
+      function ensureRtcChannel(peerId) {
+        if (typeof RTCPeerConnection === 'undefined') {
+          return Promise.resolve(null);
+        }
+        const existing = rtcPeers.get(peerId);
+        if (existing && existing.ready && existing.dc && existing.dc.readyState === 'open') {
+          return Promise.resolve(existing.dc);
+        }
+
+        return new Promise(function (resolve) {
+          let settled = false;
+          const timer = setTimeout(function () {
+            if (!settled) {
+              settled = true;
+              resolve(null); // Fall back to WebSocket chunk relay if WebRTC doesn't open in 1.8s
+            }
+          }, 1800);
+
+          try {
+            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            const dc = pc.createDataChannel('localshare', { ordered: true });
+            const entry = { pc: pc, dc: dc, ready: false };
+            rtcPeers.set(peerId, entry);
+
+            setupDataChannel(dc, peerId, entry, function () {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timer);
+                resolve(dc);
+              }
+            });
+
+            pc.onicecandidate = function (ev) {
+              if (ev.candidate) {
+                wsSend({
+                  type: 'signal',
+                  targetId: peerId,
+                  signal: { candidate: ev.candidate },
+                });
+              }
+            };
+
+            pc.createOffer()
+              .then(function (offer) {
+                return pc.setLocalDescription(offer);
+              })
+              .then(function () {
+                wsSend({
+                  type: 'signal',
+                  targetId: peerId,
+                  signal: { sdp: pc.localDescription },
+                });
+              })
+              .catch(function () {
+                if (!settled) {
+                  settled = true;
+                  clearTimeout(timer);
+                  resolve(null);
+                }
+              });
+          } catch {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timer);
+              resolve(null);
+            }
+          }
+        });
+      }
+
+      function setupDataChannel(dc, peerId, entry, onOpenCallback) {
+        dc.binaryType = 'arraybuffer';
+        dc.onopen = function () {
+          entry.ready = true;
+          if (onOpenCallback) onOpenCallback();
+        };
+        dc.onclose = function () {
+          entry.ready = false;
+        };
+        dc.onmessage = function (ev) {
+          if (typeof ev.data === 'string') {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === 'relay-meta') handleIncomingFileMeta(msg);
+              else if (msg.type === 'relay-chunk') handleIncomingFileChunk(msg);
+              else if (msg.type === 'relay-end') handleIncomingFileEnd(msg);
+              else if (msg.type === 'relay-ack') {
+                const key = msg.transferId + ':' + msg.chunkIndex;
+                const res = pendingAckResolvers.get(key);
+                if (res) {
+                  pendingAckResolvers.delete(key);
+                  res();
+                }
+              }
+            } catch {}
+          }
+        };
+      }
+
+      async function handleRtcSignal(msg) {
+        if (typeof RTCPeerConnection === 'undefined') return;
+        const peerId = msg.fromId;
+        const sig = msg.signal;
+        if (!peerId || !sig) return;
+
+        let entry = rtcPeers.get(peerId);
+        if (!entry || sig.sdp?.type === 'offer') {
+          if (entry && entry.pc) {
+            try {
+              entry.pc.close();
+            } catch {}
+          }
+          const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+          entry = { pc: pc, dc: null, ready: false };
+          rtcPeers.set(peerId, entry);
+
+          pc.onicecandidate = function (ev) {
+            if (ev.candidate) {
+              wsSend({
+                type: 'signal',
+                targetId: peerId,
+                signal: { candidate: ev.candidate },
+              });
+            }
+          };
+
+          pc.ondatachannel = function (ev) {
+            entry.dc = ev.channel;
+            setupDataChannel(ev.channel, peerId, entry);
+          };
+        }
+
+        try {
+          if (sig.sdp) {
+            await entry.pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+            if (sig.sdp.type === 'offer') {
+              const answer = await entry.pc.createAnswer();
+              await entry.pc.setLocalDescription(answer);
+              wsSend({
+                type: 'signal',
+                targetId: peerId,
+                signal: { sdp: entry.pc.localDescription },
+              });
+            }
+          } else if (sig.candidate) {
+            await entry.pc.addIceCandidate(new RTCIceCandidate(sig.candidate));
+          }
+        } catch {}
+      }
+
+      // ======================================================================
+      // Sending Files to One or All Devices
+      // ======================================================================
+      function ensureTransfersListReady() {
+        if (!hasTransferItems) {
+          hasTransferItems = true;
+          transfersListEl.innerHTML = '';
+        }
+      }
+
+      function createTransferUiRow(id, titleText, subText) {
+        ensureTransfersListReady();
+        const item = document.createElement('div');
+        item.className = 'transfer-item';
+        item.id = 'tx-' + id;
+
+        const top = document.createElement('div');
+        top.className = 'transfer-top';
+
+        const left = document.createElement('div');
+        const title = document.createElement('div');
+        title.style.fontWeight = '600';
+        title.textContent = titleText;
+        const sub = document.createElement('div');
+        sub.className = 'muted mono';
+        sub.textContent = subText;
+        left.appendChild(title);
+        left.appendChild(sub);
+
+        const right = document.createElement('div');
+        right.className = 'row';
+
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'badge mono';
+        statusSpan.textContent = '0%';
+        right.appendChild(statusSpan);
+
+        top.appendChild(left);
+        top.appendChild(right);
+
+        const track = document.createElement('div');
+        track.className = 'progress-track';
+        const bar = document.createElement('div');
+        bar.className = 'progress-bar';
+        track.appendChild(bar);
+
+        item.appendChild(top);
+        item.appendChild(track);
+        transfersListEl.prepend(item);
+
+        return {
+          item: item,
+          subEl: sub,
+          statusEl: statusSpan,
+          rightEl: right,
+          barEl: bar,
+        };
+      }
+
+      async function sendFilesToTargets(files, targetPeerIds) {
+        if (!files || files.length === 0 || !targetPeerIds || targetPeerIds.length === 0) {
+          return;
+        }
+        for (const file of files) {
+          for (const targetId of targetPeerIds) {
+            await sendSingleFileToPeer(file, targetId);
+          }
+        }
+      }
+
+      async function sendSingleFileToPeer(file, targetId) {
+        const peerObj = peers.find(function (p) {
+          return p.id === targetId;
+        });
+        const peerName = peerObj ? peerObj.name : targetId;
+        const transferId =
+          'f-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_BYTE_SIZE));
+
+        const dc = await ensureRtcChannel(targetId);
+        const transportLabel = dc && dc.readyState === 'open' ? 'P2P WebRTC' : 'LAN Relay';
+
+        const ui = createTransferUiRow(
+          transferId,
+          'Sending: ' + file.name + ' → ' + peerName,
+          formatBytes(file.size) + ' • ' + transportLabel
+        );
+
+        const sendPacket = function (payloadObj) {
+          const payloadWithFrom = Object.assign({}, payloadObj, {
+            fromId: selfId,
+            fromName: myDeviceName,
+            fromDeviceType: myDeviceType,
+          });
+          if (dc && dc.readyState === 'open') {
+            dc.send(JSON.stringify(payloadWithFrom));
+          } else {
+            wsSend(payloadObj);
+          }
+        };
+
+        sendPacket({
+          type: 'relay-meta',
+          targetId: targetId,
+          transferId: transferId,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || 'application/octet-stream',
+          totalChunks: totalChunks,
+          transport: transportLabel,
+        });
+
+        const startTime = Date.now();
+
+        for (let idx = 0; idx < totalChunks; idx++) {
+          const start = idx * CHUNK_BYTE_SIZE;
+          const end = Math.min(file.size, start + CHUNK_BYTE_SIZE);
+          const slice = file.slice(start, end);
+          const buf = await slice.arrayBuffer();
+          const b64 = arrayBufferToBase64(buf);
+
+          const ackKey = transferId + ':' + idx;
+          const ackPromise = new Promise(function (resolve) {
+            const timeout = setTimeout(function () {
+              pendingAckResolvers.delete(ackKey);
+              resolve();
+            }, 4000);
+            pendingAckResolvers.set(ackKey, function () {
+              clearTimeout(timeout);
+              resolve();
+            });
+          });
+
+          sendPacket({
+            type: 'relay-chunk',
+            targetId: targetId,
+            transferId: transferId,
+            chunkIndex: idx,
+            data: b64,
+          });
+
+          // Wait for ACK every 4 chunks to keep flow smooth and avoid buffer overflow
+          if (idx % 4 === 3 || idx === totalChunks - 1) {
+            await ackPromise;
+          } else {
+            pendingAckResolvers.delete(ackKey);
+          }
+
+          const pct = Math.round(((idx + 1) / totalChunks) * 100);
+          ui.barEl.style.width = pct + '%';
+          ui.statusEl.textContent = pct + '%';
+        }
+
+        sendPacket({
+          type: 'relay-end',
+          targetId: targetId,
+          transferId: transferId,
+        });
+
+        const elapsedSec = Math.max(0.1, (Date.now() - startTime) / 1000);
+        const speedStr = formatBytes(file.size / elapsedSec) + '/s';
+        ui.statusEl.textContent = 'Sent ✓';
+        ui.subEl.textContent =
+          formatBytes(file.size) + ' • ' + transportLabel + ' • ' + speedStr;
+      }
+
+      // ======================================================================
+      // Receiving Files & Text
+      // ======================================================================
+      function handleIncomingFileMeta(msg) {
+        const transferId = msg.transferId;
+        if (!transferId || incomingFiles.has(transferId)) return;
+
+        const senderName = msg.fromName || 'Device';
+        const transport = msg.transport || 'LAN';
+        const ui = createTransferUiRow(
+          transferId,
+          'Receiving: ' + (msg.fileName || 'file') + ' ← ' + senderName,
+          formatBytes(msg.fileSize || 0) + ' • ' + transport
+        );
+
+        incomingFiles.set(transferId, {
+          transferId: transferId,
+          fromId: msg.fromId,
+          fromName: senderName,
+          fileName: msg.fileName || 'download.bin',
+          fileSize: Number(msg.fileSize) || 0,
+          fileType: msg.fileType || 'application/octet-stream',
+          totalChunks: Math.max(1, Number(msg.totalChunks) || 1),
+          chunks: [],
+          receivedChunks: 0,
+          ui: ui,
+        });
+      }
+
+      function handleIncomingFileChunk(msg) {
+        const state = incomingFiles.get(msg.transferId);
+        if (!state) return;
+
+        const idx = Number(msg.chunkIndex) || 0;
+        if (typeof msg.data === 'string') {
+          state.chunks[idx] = base64ToUint8Array(msg.data);
+          state.receivedChunks++;
+        }
+
+        const pct = Math.min(
+          100,
+          Math.round((state.receivedChunks / state.totalChunks) * 100)
+        );
+        state.ui.barEl.style.width = pct + '%';
+        state.ui.statusEl.textContent = pct + '%';
+
+        // Send ACK back when every 4th chunk or final chunk arrives
+        if (idx % 4 === 3 || idx === state.totalChunks - 1) {
+          const entry = rtcPeers.get(state.fromId);
+          const ackMsg = {
+            type: 'relay-ack',
+            targetId: state.fromId,
+            transferId: state.transferId,
+            chunkIndex: idx,
+          };
+          if (entry && entry.dc && entry.dc.readyState === 'open') {
+            entry.dc.send(JSON.stringify(ackMsg));
+          } else {
+            wsSend(ackMsg);
+          }
+        }
+      }
+
+      function handleIncomingFileEnd(msg) {
+        const state = incomingFiles.get(msg.transferId);
+        if (!state) return;
+        incomingFiles.delete(msg.transferId);
+
+        const blob = new Blob(state.chunks, { type: state.fileType });
+        const url = URL.createObjectURL(blob);
+
+        state.ui.barEl.style.width = '100%';
+        state.ui.statusEl.textContent = 'Received ✓';
+
+        const dlLink = document.createElement('a');
+        dlLink.href = url;
+        dlLink.download = state.fileName;
+        dlLink.className = 'btn primary';
+        dlLink.textContent = 'Download';
+        state.ui.rightEl.appendChild(dlLink);
+
+        if (autoDownloadToggle.checked) {
+          dlLink.click();
+        }
+      }
+
+      function handleIncomingText(msg) {
+        const text = String(msg.text || '');
+        if (!text) return;
+        const sender = msg.fromName || 'Device';
+        const id = 'txt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+        const ui = createTransferUiRow(
+          id,
+          'Text from ' + sender,
+          new Date().toLocaleTimeString()
+        );
+        ui.barEl.style.width = '100%';
+        ui.statusEl.textContent = 'Text';
+
+        const pre = document.createElement('pre');
+        pre.className = 'mono';
+        pre.style.background = '#111113';
+        pre.style.border = '1px solid #27272a';
+        pre.style.padding = '8px';
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.wordBreak = 'break-all';
+        pre.style.fontSize = '12px';
+        pre.textContent = text;
+        ui.item.appendChild(pre);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'primary';
+        copyBtn.textContent = 'Copy';
+        copyBtn.onclick = function () {
+          navigator.clipboard.writeText(text);
+          copyBtn.textContent = 'Copied ✓';
+          setTimeout(function () {
+            copyBtn.textContent = 'Copy';
+          }, 1400);
+        };
+        ui.rightEl.appendChild(copyBtn);
+      }
+
+      // ======================================================================
+      // UI Event Listeners
+      // ======================================================================
+      saveNameBtn.onclick = function () {
+        const next = deviceNameInput.value.trim();
+        if (!next) return;
+        myDeviceName = next;
+        localStorage.setItem('localshare_device_name', myDeviceName);
+        wsSend({
+          type: 'hello',
+          name: myDeviceName,
+          deviceType: myDeviceType,
+          room: customRoom,
+        });
+        saveNameBtn.textContent = 'Saved ✓';
+        setTimeout(function () {
+          saveNameBtn.textContent = 'Save Name';
+        }, 1200);
+      };
+
+      joinRoomBtn.onclick = function () {
+        customRoom = customRoomInput.value.trim();
+        localStorage.setItem('localshare_custom_room', customRoom);
+        wsSend({
+          type: 'hello',
+          name: myDeviceName,
+          deviceType: myDeviceType,
+          room: customRoom,
+        });
+      };
+
+      fileInputSingle.onchange = function () {
+        if (fileInputSingle.files && fileInputSingle.files.length > 0 && selectedSinglePeerId) {
+          sendFilesToTargets(Array.from(fileInputSingle.files), [selectedSinglePeerId]);
+        }
+      };
+
+      broadcastFilesBtn.onclick = function () {
+        fileInputBroadcast.value = '';
+        fileInputBroadcast.click();
+      };
+
+      fileInputBroadcast.onchange = function () {
+        if (fileInputBroadcast.files && fileInputBroadcast.files.length > 0) {
+          const allIds = peers.map(function (p) {
+            return p.id;
+          });
+          sendFilesToTargets(Array.from(fileInputBroadcast.files), allIds);
+        }
+      };
+
+      broadcastDropzone.onclick = function () {
+        if (peers.length > 0) {
+          fileInputBroadcast.value = '';
+          fileInputBroadcast.click();
+        }
+      };
+
+      broadcastDropzone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        broadcastDropzone.classList.add('drag-over');
+      });
+      broadcastDropzone.addEventListener('dragleave', function () {
+        broadcastDropzone.classList.remove('drag-over');
+      });
+      broadcastDropzone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        broadcastDropzone.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files.length > 0 && peers.length > 0) {
+          const allIds = peers.map(function (p) {
+            return p.id;
+          });
+          sendFilesToTargets(Array.from(e.dataTransfer.files), allIds);
+        }
+      });
+
+      sendTextBtn.onclick = function () {
+        const text = textShareInput.value.trim();
+        if (!text || peers.length === 0) return;
+        const target = textTargetSelect.value || 'ALL';
+        wsSend({
+          type: 'text-share',
+          targetId: target,
+          text: text,
+        });
+        const targetLabel =
+          target === 'ALL'
+            ? 'All Devices (' + peers.length + ')'
+            : (peers.find(function (p) {
+                return p.id === target;
+              }) || {}).name || target;
+        const id = 'tx-txt-' + Date.now();
+        const ui = createTransferUiRow(
+          id,
+          'Sent Text → ' + targetLabel,
+          text.length > 60 ? text.slice(0, 60) + '...' : text
+        );
+        ui.barEl.style.width = '100%';
+        ui.statusEl.textContent = 'Sent ✓';
+        textShareInput.value = '';
+      };
+
+      clearTransfersBtn.onclick = function () {
+        hasTransferItems = false;
+        transfersListEl.innerHTML =
+          '<div class="empty-state">No file or text transfers yet.</div>';
+      };
+
+      connectWs();
+    })();
+  </script>
+</body>
+</html>

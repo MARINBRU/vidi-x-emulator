@@ -2,40 +2,41 @@
 set -euo pipefail
 
 echo "============================================================"
-echo " VIDI X Emulator — Automated Ubuntu Server Setup"
-echo " Domain: marinbrusic.from.hr/vidix-emulator"
+echo " marinbrusic.from.hr — Automated Ubuntu Server Setup"
+echo "   • /vidix-emulator  (VIDI X Hardware Emulator)"
+echo "   • /localshare      (Local Network File & Text Sharing)"
 echo "============================================================"
 
 # 1. Install system packages (git, curl, nginx, ufw)
-echo "[1/7] Installing system packages (git, curl, nginx, ufw)..."
+echo "[1/8] Installing system packages (git, curl, nginx, ufw)..."
 sudo apt-get update -y
 sudo apt-get upgrade -y
 sudo apt-get install -y git curl ca-certificates nginx ufw
 
 # 2. Install Node.js 22 LTS if not already installed
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d 'v')" -lt 20 ]]; then
-  echo "[2/7] Installing Node.js 22 LTS..."
+  echo "[2/8] Installing Node.js 22 LTS..."
   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   sudo apt-get install -y nodejs
 else
-  echo "[2/7] Node.js $(node -v) already installed."
+  echo "[2/8] Node.js $(node -v) already installed."
 fi
 
-# 3. Install Cloudflare Tunnel (cloudflared) automatically
+# 3. Install Cloudflare Tunnel (cloudflared) if not already installed
 if ! command -v cloudflared >/dev/null 2>&1; then
-  echo "[3/7] Installing Cloudflare Tunnel (cloudflared)..."
+  echo "[3/8] Installing Cloudflare Tunnel (cloudflared)..."
   curl -fsSL --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
   sudo dpkg -i /tmp/cloudflared.deb
   rm -f /tmp/cloudflared.deb
 else
-  echo "[3/7] cloudflared already installed."
+  echo "[3/8] cloudflared already installed."
 fi
 
-# 4. Ensure we are in the repo directory and on the right branch, then build
+# 4. Fetch latest code and build VIDI X Emulator
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "[4/7] Fetching latest code and building production bundle..."
+echo "[4/8] Fetching latest code and building production bundle..."
 git fetch origin
 git checkout arena/92418b6e-vidi-x-emulator
 git pull origin arena/92418b6e-vidi-x-emulator
@@ -43,14 +44,18 @@ git pull origin arena/92418b6e-vidi-x-emulator
 npm install --legacy-peer-deps
 npm run build
 
-# 5. Copy static build into /var/www/html/vidix-emulator
-echo "[5/7] Deploying static bundle to /var/www/html/vidix-emulator..."
+# 5. Deploy VIDI X Emulator to /var/www/html/vidix-emulator
+echo "[5/8] Deploying /vidix-emulator and /localshare static files..."
 sudo mkdir -p /var/www/html/vidix-emulator
 sudo rm -rf /var/www/html/vidix-emulator/*
 sudo cp -r "$SCRIPT_DIR/dist/"* /var/www/html/vidix-emulator/
 
-if [ ! -f /var/www/html/index.html ] || grep -q "Welcome to nginx" /var/www/html/index.html 2>/dev/null; then
-  sudo tee /var/www/html/index.html > /dev/null << 'EOF'
+# Deploy LocalShare static frontend to /var/www/html/localshare
+sudo mkdir -p /var/www/html/localshare
+sudo cp "$SCRIPT_DIR/localshare/index.html" /var/www/html/localshare/index.html
+
+# Update root homepage /var/www/html/index.html
+sudo tee /var/www/html/index.html > /dev/null << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -59,24 +64,64 @@ if [ ! -f /var/www/html/index.html ] || grep -q "Welcome to nginx" /var/www/html
   <title>Marin Brusić</title>
   <style>
     body { background: #141416; color: #e4e4e7; font-family: monospace; padding: 40px; }
-    a { color: #e4e4e7; border: 1px solid #52525b; padding: 8px 14px; text-decoration: none; display: inline-block; margin-top: 12px; }
+    .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+    a { color: #e4e4e7; border: 1px solid #52525b; padding: 10px 16px; text-decoration: none; display: inline-block; background: #1c1c1f; }
     a:hover { background: #27272a; }
   </style>
 </head>
 <body>
   <h1>marinbrusic.from.hr</h1>
   <p>Projects:</p>
-  <a href="/vidix-emulator/">Open VIDI X Emulator &rarr;</a>
+  <div class="links">
+    <a href="/vidix-emulator/">VIDI X Emulator &rarr;</a>
+    <a href="/localshare/">LocalShare (LAN File Transfer) &rarr;</a>
+  </div>
 </body>
 </html>
 EOF
-fi
 
 sudo chown -R www-data:www-data /var/www/html
 sudo chmod -R 755 /var/www/html
 
-# 6. Configure Nginx for / and /vidix-emulator/
-echo "[6/7] Configuring Nginx..."
+# 6. Install and start the sandboxed LocalShare WebSocket signaling service on 127.0.0.1:3080
+echo "[6/8] Configuring LocalShare signaling service (127.0.0.1:3080)..."
+sudo mkdir -p /opt/localshare
+sudo cp "$SCRIPT_DIR/localshare/server.mjs" /opt/localshare/server.mjs
+sudo cp "$SCRIPT_DIR/localshare/index.html" /opt/localshare/index.html
+sudo chown -R www-data:www-data /opt/localshare
+sudo chmod 755 /opt/localshare/server.mjs
+
+NODE_BIN="$(command -v node)"
+sudo tee /etc/systemd/system/localshare.service > /dev/null << EOF
+[Unit]
+Description=LocalShare Zero-Storage LAN Signaling Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/localshare
+Environment=LOCALSHARE_HOST=127.0.0.1
+Environment=LOCALSHARE_PORT=3080
+ExecStart=${NODE_BIN} /opt/localshare/server.mjs
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now localshare.service
+sudo systemctl restart localshare.service
+
+# 7. Configure Nginx for /, /vidix-emulator/, and /localshare/
+echo "[7/8] Configuring Nginx..."
 sudo tee /etc/nginx/sites-available/default > /dev/null << 'EOF'
 server {
     listen 80 default_server;
@@ -89,6 +134,7 @@ server {
     gzip on;
     gzip_types text/plain text/css application/javascript application/json image/svg+xml;
 
+    # 1. VIDI X Emulator (/vidix-emulator)
     location = /vidix-emulator {
         return 301 /vidix-emulator/;
     }
@@ -97,6 +143,29 @@ server {
         try_files $uri $uri/ /vidix-emulator/index.html;
     }
 
+    # 2. LocalShare (/localshare) + WebSocket signaling (/localshare/ws)
+    location = /localshare {
+        return 301 /localshare/;
+    }
+
+    location = /localshare/ws {
+        proxy_pass http://127.0.0.1:3080/localshare/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location /localshare/ {
+        try_files $uri $uri/ /localshare/index.html;
+    }
+
+    # 3. Root Home Page (/)
     location / {
         try_files $uri $uri/ =404;
     }
@@ -107,13 +176,14 @@ sudo nginx -t
 sudo systemctl enable --now nginx
 sudo systemctl restart nginx
 
-# 7. Enable UFW firewall (block all incoming ports, allow outgoing)
-echo "[7/7] Locking down UFW firewall..."
+# 8. Ensure UFW firewall remains locked down
+echo "[8/8] Verifying UFW firewall..."
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw --force enable
 
 echo "============================================================"
-echo " DONE! Everything in Part 3 is installed and running."
-echo " cloudflared is also pre-installed for Part 4."
+echo " DONE! Both apps are live:"
+echo "   • https://marinbrusic.from.hr/vidix-emulator"
+echo "   • https://marinbrusic.from.hr/localshare"
 echo "============================================================"
