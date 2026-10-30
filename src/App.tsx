@@ -251,7 +251,7 @@ export function App() {
       (mode === 'cpp'
         ? `My VIDI X Sketch #${userProjects.length + 1}`
         : mode === 'python'
-        ? `My Python Gyro App #${userProjects.length + 1}`
+        ? `My Python App #${userProjects.length + 1}`
         : `My Block Project #${userProjects.length + 1}`);
     const starterBlockProg =
       mode === 'blocks' ? createStarterBlockProgram(name) : undefined;
@@ -269,7 +269,7 @@ export function App() {
         mode === 'cpp'
           ? 'Custom Arduino C++ (.ino) project saved in browser cookies'
           : mode === 'python'
-          ? 'Custom CircuitPython (.py) + Gyro project saved in browser cookies'
+          ? 'Custom CircuitPython (.py) project saved in browser cookies'
           : 'Custom Visual Block project saved in browser cookies',
       mode,
       sketchCode,

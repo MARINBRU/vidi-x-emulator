@@ -63,6 +63,18 @@ export function rgb888To565(color: unknown): number {
   return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3);
 }
 
+interface DisplayIoBitmap {
+  width: number;
+  height: number;
+  pixels?: Uint8Array;
+  nonzeroCount?: number;
+  isFont?: boolean;
+}
+
+type DisplayIoPalette = Record<number, number> & {
+  isTransparent?: (index: number) => boolean;
+};
+
 interface DisplayIoNode {
   __kind: 'group' | 'tilegrid' | 'label' | 'rect' | 'roundrect' | 'circle' | 'line';
   x: number;
@@ -70,8 +82,13 @@ interface DisplayIoNode {
   scale?: number;
   children?: DisplayIoNode[];
   // TileGrid
-  bitmap?: { width: number; height: number };
-  pixel_shader?: Record<number, number>;
+  bitmap?: DisplayIoBitmap;
+  pixel_shader?: DisplayIoPalette;
+  gridWidth?: number;
+  gridHeight?: number;
+  tileWidth?: number;
+  tileHeight?: number;
+  terminalLines?: string[];
   // Label
   text?: string;
   color?: number | null;
@@ -140,14 +157,49 @@ export function createPythonRuntimeEnv(
         break;
       }
       case 'tilegrid': {
-        const bgHex = node.pixel_shader?.[0] ?? 0x000000;
-        const c565 = rgb888To565(bgHex);
-        const w = node.bitmap?.width ?? 320;
-        const h = node.bitmap?.height ?? 240;
-        if (absX === 0 && absY === 0 && w >= 320 && h >= 240) {
-          disp.fillScreen(c565);
+        const bitmap = node.bitmap;
+        const palette = node.pixel_shader;
+        const tileWidth = node.tileWidth ?? bitmap?.width ?? 320;
+        const tileHeight = node.tileHeight ?? bitmap?.height ?? 240;
+        const w = tileWidth * (node.gridWidth ?? 1);
+        const h = tileHeight * (node.gridHeight ?? 1);
+        const transparent = (index: number) => palette?.isTransparent?.(index) ?? false;
+
+        if (bitmap?.isFont) {
+          if (!transparent(0)) {
+            disp.fillRect(absX, absY, w * scale, h * scale, rgb888To565(palette?.[0] ?? 0));
+          }
+          disp.setTextSize(Math.max(1, Math.round(scale)));
+          disp.setTextColor(rgb888To565(palette?.[1] ?? 0xffffff));
+          for (let row = 0; row < (node.terminalLines?.length ?? 0); row++) {
+            disp.setCursor(absX, absY + row * tileHeight * scale);
+            disp.print(node.terminalLines![row]);
+          }
+        } else if (!bitmap?.pixels || !bitmap.nonzeroCount) {
+          if (!transparent(0)) {
+            const color = rgb888To565(palette?.[0] ?? 0);
+            if (absX === 0 && absY === 0 && w * scale >= 320 && h * scale >= 240) {
+              disp.fillScreen(color);
+            } else {
+              disp.fillRect(absX, absY, w * scale, h * scale, color);
+            }
+          }
         } else {
-          disp.fillRect(absX, absY, w, h, c565);
+          // Render palette runs, including transparency, rather than treating
+          // every bitmap as a solid rectangle. The starter's ball is a sprite.
+          for (let y = 0; y < Math.min(h, bitmap.height); y++) {
+            let x = 0;
+            while (x < Math.min(w, bitmap.width)) {
+              const value = bitmap.pixels[y * bitmap.width + x];
+              let end = x + 1;
+              while (end < Math.min(w, bitmap.width) && bitmap.pixels[y * bitmap.width + end] === value) end++;
+              if (!transparent(value)) {
+                disp.fillRect(absX + x * scale, absY + y * scale, (end - x) * scale, scale,
+                  rgb888To565(palette?.[value] ?? 0));
+              }
+              x = end;
+            }
+          }
         }
         break;
       }
@@ -643,33 +695,103 @@ export function createPythonRuntimeEnv(
     },
     FourWire: (..._args: unknown[]) => ({ __fourWire: true }),
     Group: makeGroup,
-    Bitmap: (width: number, height: number, _valueCount = 1) => ({
-      width: Number(width) || 320,
-      height: Number(height) || 240,
-    }),
+    Bitmap: (width: number, height: number, _valueCount = 1) => {
+      const w = Number(width) || 320;
+      const h = Number(height) || 240;
+      const bitmap: DisplayIoBitmap & { fill: (v: number) => void } = {
+        width: w, height: h, pixels: new Uint8Array(w * h), nonzeroCount: 0,
+        fill(value: number) {
+          bitmap.pixels!.fill(value);
+          bitmap.nonzeroCount = value ? w * h : 0;
+          sceneDirty = true;
+        },
+      };
+      return new Proxy(bitmap, {
+        get(target, prop) {
+          if (typeof prop === 'string' && /^\d+$/.test(prop)) return target.pixels![Number(prop)];
+          return Reflect.get(target, prop);
+        },
+        set(target, prop, value) {
+          if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+            const index = Number(prop);
+            if (index < 0 || index >= w * h) throw new RangeError('Bitmap index out of range');
+            const old = target.pixels![index];
+            const next = Number(value) || 0;
+            target.pixels![index] = next;
+            target.nonzeroCount = (target.nonzeroCount ?? 0) + Number(next !== 0) - Number(old !== 0);
+          } else {
+            Reflect.set(target, prop, value);
+          }
+          sceneDirty = true;
+          return true;
+        },
+      });
+    },
     Palette: (_count = 1) => {
-      const pal: Record<number, number> = { 0: 0x000000 };
-      return pal;
+      const transparent = new Set<number>();
+      const pal = {
+        0: 0x000000,
+        make_transparent: (index: number) => { transparent.add(index); sceneDirty = true; },
+        make_opaque: (index: number) => { transparent.delete(index); sceneDirty = true; },
+        isTransparent: (index: number) => transparent.has(index),
+      };
+      return new Proxy(pal, {
+        set(target, prop, value) { Reflect.set(target, prop, value); sceneDirty = true; return true; },
+      });
     },
     TileGrid: (...rawArgs: unknown[]): DisplayIoNode => {
       const { pos, kw } = extractKw(rawArgs);
-      const bmp = (pos[0] as { width: number; height: number }) || {
-        width: 320,
-        height: 240,
-      };
-      return {
+      const bmp = (pos[0] ?? kw.bitmap ?? { width: 320, height: 240 }) as DisplayIoBitmap;
+      const grid: DisplayIoNode = {
         __kind: 'tilegrid',
         bitmap: bmp,
-        pixel_shader: (kw.pixel_shader as Record<number, number>) || { 0: 0x000000 },
+        pixel_shader: (kw.pixel_shader as DisplayIoPalette) || { 0: 0x000000 },
+        gridWidth: Number(kw.width ?? 1),
+        gridHeight: Number(kw.height ?? 1),
+        tileWidth: Number(kw.tile_width ?? bmp.width),
+        tileHeight: Number(kw.tile_height ?? bmp.height),
         x: Number(kw.x ?? 0),
         y: Number(kw.y ?? 0),
       };
+      return new Proxy(grid, {
+        set(target, prop, value) { Reflect.set(target, prop, value); sceneDirty = true; return true; },
+      });
     },
   };
 
   const ILI9341 = (..._rawArgs: unknown[]) => boardDisplayObj;
   const ili9341 = { ILI9341 };
-  const terminalio = { FONT: 'FONT_5X7' };
+  // terminalio.FONT and Terminal are built into the CircuitPython firmware.
+  const terminalio = {
+    FONT: {
+      bitmap: { width: 576, height: 12, isFont: true } as DisplayIoBitmap,
+      get_bounding_box: () => [6, 12],
+    },
+    Terminal: (grid: DisplayIoNode, _font: unknown) => {
+      const width = grid.gridWidth ?? 1;
+      const height = grid.gridHeight ?? 1;
+      const lines = Array.from({ length: height }, () => ' '.repeat(width).split(''));
+      let x = 0;
+      let y = 0;
+      const sync = () => { grid.terminalLines = lines.map((line) => line.join('')); sceneDirty = true; };
+      sync();
+      return {
+        write: (text: unknown) => {
+          for (const ch of String(text)) {
+            if (ch === '\r') { x = 0; continue; }
+            if (ch === '\n') { y++; }
+            else {
+              if (x >= width) { x = 0; y++; }
+              if (y >= height) { lines.shift(); lines.push(' '.repeat(width).split('')); y = height - 1; }
+              lines[y][x++] = ch;
+            }
+            if (y >= height) { lines.shift(); lines.push(' '.repeat(width).split('')); y = height - 1; }
+          }
+          sync();
+        },
+      };
+    },
+  };
 
   const label = {
     Label: (...rawArgs: unknown[]): DisplayIoNode => {

@@ -219,7 +219,7 @@ describe('VIDI X Hardware & Multi-Board Emulator Suite', () => {
     expect(exportedHw).toContain('esp_now_send');
   });
 
-  it('executes VIDI X CircuitPython (.py) programs and simulates VIDIIC MPU-6050 Gyroscope without idle speaker buzzing', async () => {
+  it('runs the CircuitPython starter and VidiLAB quiz without idle speaker buzzing', async () => {
     const cluster = new VidiXClusterManager();
     const board = cluster.getBoards()[0];
 
@@ -232,7 +232,7 @@ describe('VIDI X Hardware & Multi-Board Emulator Suite', () => {
     expect(board.state.sensors.gyroRoll).toBe(30);
     expect(board.state.sensors.gyroRateX).toBeGreaterThan(0);
 
-    // Run the starter CircuitPython + MPU-6050 Gyroscope script
+    // Run the dependency-free CircuitPython starter
     cluster.updateSketch(
       board.state.id,
       DEFAULT_STARTER_PYTHON,

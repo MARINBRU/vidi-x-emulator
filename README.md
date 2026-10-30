@@ -37,6 +37,28 @@ New C++ starter projects include the LovyanGFX display configuration needed for 
 
 A standalone copy of the fresh starter is also available at [`examples/VIDIXStarter/VIDIXStarter.ino`](examples/VIDIXStarter/VIDIXStarter.ino). It needs LovyanGFX and FastLED. When using Arduino IDE, choose **ESP32 Wrover Module** and enable PSRAM. Arbitrary projects may also use simulator-only APIs or need additional libraries; review their generated code before uploading to hardware. The display has no dedicated reset GPIO (`pin_rst = -1`); GPIO 4 is touch chip select.
 
+## Running the CircuitPython starter on VIDI X
+
+The new Python starter uses the built-in `board.DISPLAY`, `displayio`, `terminalio`, `digitalio`, and `analogio` APIs in CircuitPython 9. It does **not** require an external sensor or extra libraries by default. The D-pad moves the ball and A increases the score. The starter does not include touch, sound, or RGB LED libraries.
+
+In the Python editor, use **EXPORT .PY** to download `code.py`, or use the standalone [`examples/CircuitPythonStarter/code.py`](examples/CircuitPythonStarter/code.py). The VIDI X uses the original ESP32, which does **not** appear as a USB storage drive. To put the file on the board, use a serial-capable editor such as [Thonny](https://thonny.org/):
+
+1. Connect the VIDI X by USB. In Thonny choose **Tools → Options → Interpreter**, select **CircuitPython (generic)** and your board's serial port.
+2. Open the downloaded file, then choose **File → Save as → CircuitPython device** and save it as `/code.py`. Back up an existing file first. Alternatively, paste the code into the VIDI X Python editor you already use.
+3. Run the code or press reset. CircuitPython starts `/code.py` on reset; if an older `/code.txt` exists, it takes precedence, so back it up and rename it if needed.
+
+For more on ESP32 file access, see [Adafruit's guide](https://learn.adafruit.com/welcome-to-circuitpython/the-circuitpy-drive#boards-without-circuitpy).
+
+Untouched old Python starters are updated automatically when the website is refreshed; projects with edits are kept as-is. If an edited older starter reports `adafruit_mpu6050` or uses `display.fill()` or `mpu.roll`, create a new Python project and manually carry over your changes. The old immediate-mode display calls and `mpu.roll` / `mpu.pitch` are simulator-only, not CircuitPython APIs.
+
+### Optional external MPU-6050
+
+The playable gyro example and the starter's `USE_MPU6050` switch are optional. On a real board, they require an **external** MPU-6050 connected to VIDIIC and the [Adafruit MPU-6050 library and dependencies](https://learn.adafruit.com/mpu6050-6-dof-accelerometer-and-gyro/python-and-circuitpython). Copy `adafruit_mpu6050.mpy`, `adafruit_bus_device`, and `adafruit_register` from the CircuitPython **9.x** library bundle to the board filesystem under `/lib` (for example, via Thonny’s **View → Files**), then set `USE_MPU6050 = True`. Connect the breakout according to its 3.3 V logic/power requirements: VIDIIC SCL is GPIO 32, SDA is GPIO 33, and grounds must be common. Check the board's switch/jumper configuration and your breakout's voltage requirements before wiring.
+
+VIDIIC shares GPIO 32 and 33 with buttons A and B. Do not use those buttons while the bus is active; the demo uses MENU to score instead. The driver's `acceleration` is in m/s² and `gyro` is in radians/s; the demo estimates static tilt from acceleration, not from nonexistent `mpu.roll` / `mpu.pitch` properties. With `USE_MPU6050 = False`, the default demo does not import the driver or use I2C. If it is enabled without the library or sensor, initialization will fail. Other premade examples may require extra libraries or older CircuitPython APIs and should be checked separately.
+
+The starter is tested in the simulator and against strict host mocks of the CircuitPython APIs. Those tests do not replace a test on a physical VIDI X.
+
 ## TextShare and LocalShare
 
 `/textshare/` lets connected devices paste text, send text files, and copy or download received content. Choose a specific device or all devices. TextShare and LocalShare use the same device rooms, so devices on either page can communicate. TextShare accepts up to 10 MiB per item; larger pasted text is sent as a text file. Files are transferred unchanged, while previews and copied text are decoded as UTF-8.

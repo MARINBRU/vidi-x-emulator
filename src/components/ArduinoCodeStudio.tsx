@@ -36,7 +36,7 @@ interface ArduinoCodeStudioProps {
 }
 
 const PIN_REFERENCE = [
-  { macro: 'VIDIIC / MPU-6050', pin: '32 / 33', note: 'I2C 6-DoF Gyro & Accel (0x68)' },
+  { macro: 'VIDIIC / MPU-6050', pin: '32 / 33', note: 'External I2C gyro & accel (0x68)' },
   { macro: 'TFT_CS / TFT_DC', pin: '5 / 21', note: 'ILI9341 320x240 SPI TFT' },
   { macro: 'TOUCH_CS / TOUCH_IRQ', pin: '4 / 12', note: 'XPT2046 Resistive Touch' },
   { macro: 'BTN_LR / UP_DOWN', pin: '34 / 35', note: 'D-Pad Analog (>4000 / ~2000)' },
@@ -54,9 +54,10 @@ const PIN_REFERENCE = [
 ];
 
 const PYTHON_API_REFERENCE = [
-  { macro: 'adafruit_mpu6050', pin: 'board.VIDIIC()', note: 'mpu.acceleration, mpu.gyro, mpu.roll, mpu.pitch' },
-  { macro: 'board.DISPLAY', pin: 'ILI9341', note: 'display.fill(), fill_rectangle(), circle(), text()' },
-  { macro: 'displayio.Group()', pin: 'Scene Graph', note: 'Rect, RoundRect, label.Label(terminalio.FONT)' },
+  { macro: 'MPU-6050 (optional)', pin: 'board.VIDIIC()', note: 'External sensor + library; acceleration (m/s²), gyro (rad/s)' },
+  { macro: 'VIDIIC / A / B', pin: 'GPIO 32 / 33', note: 'Shared pins: A/B unavailable while I2C is in use' },
+  { macro: 'board.DISPLAY', pin: 'ILI9341', note: 'Set display.root_group to a displayio.Group' },
+  { macro: 'displayio', pin: 'Scene graph', note: 'Bitmap, Palette, TileGrid, Group; built-in terminalio for text' },
   { macro: 'xpt2046_circuitpython', pin: 'board.TOUCH_CS', note: 'x, y = touch.get_coordinates()' },
   { macro: 'analogio.AnalogIn', pin: 'BTN_L_R / UP_DOWN', note: '>60000 (Left/Up), 30000..60000 (Right/Down)' },
   { macro: 'digitalio.DigitalInOut', pin: 'BTN_A / BTN_B', note: 'Pull.UP, not switch.value' },
@@ -116,7 +117,7 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${safeName}_code.py`;
+      a.download = 'code.py';
       a.click();
       URL.revokeObjectURL(url);
       return;
@@ -333,7 +334,7 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
               className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/50 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
               title={
                 isPythonProject
-                  ? 'Download CircuitPython code.py file for VIDI X V1.1'
+                  ? 'Download code.py to upload to your VIDI X'
                   : 'Download ready-to-flash Arduino IDE (.ino) sketch for a physical VIDI X v1.1 (ESP32-WROVER)'
               }
             >
@@ -394,6 +395,11 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
         {!isPythonProject && needsVidiXDisplayConfig(draftCode) && (
           <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="status">
             This sketch needs the VIDI X display setup for a real board. Use COPY .INO or EXPORT REAL HW .INO to add it without changing your saved project.
+          </div>
+        )}
+        {isPythonProject && /# VIDI X CircuitPython \(.py\)/.test(draftCode) && /mpu\.(roll|pitch)|display\.(fill_rectangle|circle|text)\s*\(/.test(draftCode) && (
+          <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="status">
+            This edited older starter uses simulator-only display or gyro methods. Its code is unchanged; create a new Python project for a hardware-compatible starter and copy your changes across.
           </div>
         )}
         {copyStatus === 'error' && (

@@ -247,7 +247,7 @@ export const VidiXBoardView: React.FC<VidiXBoardViewProps> = ({
                 ? 'bg-zinc-200 text-zinc-900 font-bold border-zinc-300'
                 : 'bg-[#090b10] hover:bg-[#1c202c] text-zinc-300 border-[#252a36]'
             }`}
-            title="Toggle Onboard Sensors & VIDIIC MPU-6050 Gyroscope"
+            title="Toggle sensors and simulated external MPU-6050"
           >
             SENSORS / GYRO
           </button>
@@ -894,7 +894,7 @@ export const VidiXBoardView: React.FC<VidiXBoardViewProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2">
                 <span className="text-zinc-200 font-semibold">
-                  VIDIIC I2C // MPU-6050 6-DoF GYRO + ACCEL (0x68 | SCL=32 SDA=33)
+                  SIMULATED EXTERNAL MPU-6050 // VIDIIC (0x68 | SCL=32 SDA=33)
                 </span>
               </div>
               <div className="flex items-center gap-2">

@@ -1,6 +1,7 @@
 import { BLOCK_TEMPLATES, BlockProgram, compileBlocksToArduino } from './blocklyEngine';
 import { EXAMPLE_SKETCHES } from './exampleSketches';
 import { addVidiXHardwareSupport } from './hardwareExporter';
+import starterPython from '../../examples/CircuitPythonStarter/code.py?raw';
 
 export interface UserProject {
   id: string;
@@ -134,8 +135,8 @@ export const DEFAULT_STARTER_CPP = addVidiXHardwareSupport(
     )
 );
 
-// Default starter CircuitPython (.py) script for VIDI X V1.1 + VIDIIC MPU-6050 Gyroscope
-export const DEFAULT_STARTER_PYTHON = `# VIDI X CircuitPython (.py) — Saved in Browser Cookies
+// Retain the old starter only to identify untouched projects during migration.
+const LEGACY_STARTER_PYTHON = `# VIDI X CircuitPython (.py) — Saved in Browser Cookies
 # Board: VIDI X V1.1 + VIDIIC I2C MPU-6050 6-DoF Gyroscope (0x68 on SCL=32, SDA=33)
 import time
 import board
@@ -222,6 +223,10 @@ while True:
 
     time.sleep(0.025)
 `;
+
+// Keep the standalone hardware file and the editor starter identical.
+export const DEFAULT_STARTER_PYTHON = starterPython;
+const PREMADE_PYTHON_GYRO = starterPython.replace('USE_MPU6050 = False', 'USE_MPU6050 = True');
 
 const PREMADE_VIDILAB_QUIZ_PY = `# Official VidiLAB CircuitPython Quiz (8080.py from VidiLAB-com/VIDI-X-Primjeri)
 import board
@@ -595,14 +600,14 @@ export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
   {
     id: 'premade-python-gyro',
     name: 'Gyroscope Horizon & Tilt Ball (CircuitPython + MPU-6050)',
-    subtitle: 'VIDIIC I2C 6-DoF Gyroscope & Accelerometer (0x68 on SCL=32 / SDA=33)',
+    subtitle: 'External MPU-6050 via VIDIIC (SCL=32 / SDA=33)',
     description:
-      'CircuitPython program using adafruit_mpu6050 on the VIDIIC I2C connector. Tilt the board via SENSORS / GYRO or D-Pad to move the ball and view live Roll, Pitch, and Acceleration.',
+      'Tilt using SENSORS / GYRO or the D-pad. A real board requires an external MPU-6050 and its libraries; use MENU, not A/B, while VIDIIC is active.',
     category: 'hardware-demo',
     badge: 'PYTHON + GYRO',
     mode: 'python',
     boardCount: 1,
-    sketchCode: DEFAULT_STARTER_PYTHON,
+    sketchCode: PREMADE_PYTHON_GYRO,
   },
   {
     id: 'premade-python-quiz',
@@ -737,8 +742,8 @@ export function createDefaultUserProjects(): UserProject[] {
     },
     {
       id: 'proj-starter-python',
-      name: 'My Python Gyro App',
-      description: 'Custom CircuitPython (.py) + MPU-6050 Gyro project saved in browser cookies',
+      name: 'My Python App',
+      description: 'Custom CircuitPython (.py) project saved in browser cookies',
       mode: 'python',
       sketchCode: DEFAULT_STARTER_PYTHON,
       boardCount: 1,
@@ -842,6 +847,12 @@ function sanitizeLoadedProjects(projects: UserProject[]): {
     if (next.mode === 'cpp' && next.sketchCode === LEGACY_STARTER_CPP) {
       changed = true;
       next.sketchCode = DEFAULT_STARTER_CPP;
+    }
+
+    if (next.mode === 'python' && next.sketchCode === LEGACY_STARTER_PYTHON) {
+      changed = true;
+      next.sketchCode = next.name.startsWith('Gyroscope Horizon & Tilt Ball (CircuitPython + MPU-6050)')
+        ? PREMADE_PYTHON_GYRO : DEFAULT_STARTER_PYTHON;
     }
 
     // Restore built-in starter projects if they were previously converted to another mode
