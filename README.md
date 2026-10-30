@@ -6,10 +6,10 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 
 ### 1. Full VIDI X v1.1 Onboard Hardware Suite
 - **ILI9341 320×240 16-bit RGB565 TFT Display**: Full pixel framebuffer supporting `Adafruit_ILI9341`, `Adafruit_GFX`, and `TFT_eSPI` APIs (`fillScreen`, `drawPixel`, `drawLine`, `drawRect`, `fillRect`, `drawCircle`, `fillCircle`, `fillTriangle`, `print`, `println`, `printf`, `drawString`, `drawBitmap`, `pushImage`).
-- **XPT2046 Resistive Touchscreen (`TOUCH_CS = 14`, `TOUCH_IRQ = 2`)**: Click and drag directly on the 320×240 screen to trigger `ts.touched()` and `ts.getPoint()` (`x, y, z`).
+- **XPT2046 Resistive Touchscreen (`TOUCH_CS = 4`, `TOUCH_IRQ = 12`)**: Click and drag directly on the 320×240 screen to trigger `ts.touched()` and `ts.getPoint()` (`x, y, z`).
 - **Authentic VIDI X Buttons (Both Analog Resistor Ladder & Digital Modes)**:
-  - **D-Pad UP / DOWN (`GPIO 34`)**: Analog resistor ladder (`UP = 4095`, `DOWN = 1950`, `IDLE = 0`) + direct `BTN_UP` / `BTN_DOWN` digital reads.
-  - **D-Pad LEFT / RIGHT (`GPIO 35`)**: Analog resistor ladder (`LEFT = 4095`, `RIGHT = 1950`, `IDLE = 0`) + direct `BTN_LEFT` / `BTN_RIGHT` digital reads.
+  - **D-Pad UP / DOWN (`GPIO 35`)**: Analog resistor ladder (`UP = 4095`, `DOWN = 1950`, `IDLE = 0`) + direct `BTN_UP` / `BTN_DOWN` digital reads.
+  - **D-Pad LEFT / RIGHT (`GPIO 34`)**: Analog resistor ladder (`LEFT = 4095`, `RIGHT = 1950`, `IDLE = 0`) + direct `BTN_LEFT` / `BTN_RIGHT` digital reads.
   - **SELECT / START (`GPIO 27`)**: Analog resistor ladder (`SELECT = 4095`, `START = 1950`, `IDLE = 0`) + direct `BTN_SELECT` / `BTN_START` digital reads.
   - **Action Buttons `A` (`GPIO 32`) & `B` (`GPIO 33`)**: Tactile arcade buttons supporting both `INPUT_PULLUP` digital reads and analog reads.
   - **System Keys**: `MENU` / `VOL+` / `VOL-` (`GPIO 13`), `BOOT` (`GPIO 0`), `EN / RESET`, and `ON/OFF` power switch.
@@ -31,6 +31,12 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 ### 3. Hardware Extension Bus Architecture (`src/emulator/extensions/registry.ts`)
 - Every simulated VIDI X board exposes a 60-pin `ExtensionBusContext` (`readDigital`, `writeDigital`, `readAnalog`, `writeAnalog`, `sendSerialRx`, `emitInterrupt`) managed by `ExtensionRegistry`, ready for plug-and-play hardware extensions.
 
+## Compiling a C++ project for VIDI X
+
+New C++ starter projects include the LovyanGFX display configuration needed for a real VIDI X v1.1. In the C++ editor, use **COPY .INO** and paste the result into [the VIDI X online compiler](https://code.vidi-x.org/), or use **EXPORT REAL HW .INO** and upload the downloaded file there. These actions prepare a separate copy; they do not change your saved code. Untouched older starters are updated automatically, while projects containing edits are left intact. For an edited older starter that is missing `LGFX`, the copy/export buttons add the display configuration to the output.
+
+A standalone copy of the fresh starter is also available at [`examples/VIDIXStarter/VIDIXStarter.ino`](examples/VIDIXStarter/VIDIXStarter.ino). It needs LovyanGFX and FastLED. When using Arduino IDE, choose **ESP32 Wrover Module** and enable PSRAM. Arbitrary projects may also use simulator-only APIs or need additional libraries; review their generated code before uploading to hardware. The display has no dedicated reset GPIO (`pin_rst = -1`); GPIO 4 is touch chip select.
+
 ## TextShare and LocalShare
 
 `/textshare/` lets connected devices paste text, send text files, and copy or download received content. Choose a specific device or all devices. TextShare and LocalShare use the same device rooms, so devices on either page can communicate. TextShare accepts up to 10 MiB per item; larger pasted text is sent as a text file. Files are transferred unchanged, while previews and copied text are decoded as UTF-8.
@@ -45,3 +51,11 @@ On the Ubuntu VM, run `bash setup.sh` from the repository to build and deploy th
 npm install --legacy-peer-deps
 npm run dev
 ```
+
+To additionally compile the starter, its exports, and the multiplayer example with a locally installed Arduino CLI, install the ESP32 board package and the LovyanGFX and FastLED libraries, then run:
+
+```bash
+ARDUINO_CLI=arduino-cli npm test
+```
+
+The optional compile test defaults to `esp32:esp32:esp32wrover`; set `ARDUINO_FQBN` to use another installed ESP32 Wrover board definition. This verifies compilation, not operation on a physical device.

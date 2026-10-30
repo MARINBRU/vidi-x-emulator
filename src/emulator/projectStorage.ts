@@ -1,5 +1,6 @@
 import { BLOCK_TEMPLATES, BlockProgram, compileBlocksToArduino } from './blocklyEngine';
 import { EXAMPLE_SKETCHES } from './exampleSketches';
+import { addVidiXHardwareSupport } from './hardwareExporter';
 
 export interface UserProject {
   id: string;
@@ -41,8 +42,9 @@ const MAX_COOKIE_CHUNKS = 32;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
 const OVERFLOW_STORAGE_KEY = 'vidix_cookie_overflow_backup';
 
-// Default starter C++ sketch for a brand-new user project
-export const DEFAULT_STARTER_CPP = `// ============================================================================
+// Keep the original template for identifying untouched projects during migration.
+// Customized projects are never replaced by the new starter.
+const LEGACY_STARTER_CPP = `// ============================================================================
 // MY VIDI X PROJECT (.INO) — Saved in Browser Cookies
 // Board: VIDI X v1.1 (ESP32-WROVER + ILI9341 320x240 TFT + FastLED)
 // ============================================================================
@@ -116,6 +118,21 @@ void loop() {
   delay(16);
 }
 `;
+
+// Self-contained for both the simulator and an Arduino ESP32 compiler. The
+// explicit PSRAM allocation is needed for a full-screen 16-bit sprite.
+export const DEFAULT_STARTER_CPP = addVidiXHardwareSupport(
+  LEGACY_STARTER_CPP
+    .replace('#define BTN_B       27', '#define BTN_B       33')
+    .replace(
+      '  canvas.createSprite(320, 240);',
+      `  canvas.setPsram(true);
+  if (!canvas.createSprite(320, 240)) {
+    canvas.setColorDepth(8);
+    canvas.createSprite(320, 240);
+  }`
+    )
+);
 
 // Default starter CircuitPython (.py) script for VIDI X V1.1 + VIDIIC MPU-6050 Gyroscope
 export const DEFAULT_STARTER_PYTHON = `# VIDI X CircuitPython (.py) — Saved in Browser Cookies
@@ -820,6 +837,13 @@ function sanitizeLoadedProjects(projects: UserProject[]): {
   const cleaned = projects.map((p) => {
     const next = { ...p };
 
+    // Only replace a byte-for-byte untouched old starter. Any user edits,
+    // including changes to the original starter, remain exactly as saved.
+    if (next.mode === 'cpp' && next.sketchCode === LEGACY_STARTER_CPP) {
+      changed = true;
+      next.sketchCode = DEFAULT_STARTER_CPP;
+    }
+
     // Restore built-in starter projects if they were previously converted to another mode
     if (next.id === 'proj-starter-cpp' && next.mode !== 'cpp') {
       changed = true;
@@ -911,7 +935,7 @@ export function loadProjectsFromCookies(): UserProject[] {
         const parsed = JSON.parse(backup) as UserProject[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           const { cleaned, changed } = sanitizeLoadedProjects(parsed);
-          if (changed) saveProjectsToCookies(cleaned, cleaned[0].id);
+          if (changed) saveProjectsToCookies(cleaned, getActiveProjectIdFromCookie() || cleaned[0].id);
           return cleaned;
         }
       }
@@ -947,7 +971,7 @@ export function loadProjectsFromCookies(): UserProject[] {
           purgeLegacyLargeCookies();
           if (Array.isArray(parsed) && parsed.length > 0) {
             const { cleaned } = sanitizeLoadedProjects(parsed);
-            saveProjectsToCookies(cleaned, cleaned[0].id);
+            saveProjectsToCookies(cleaned, getActiveProjectIdFromCookie() || cleaned[0].id);
             return cleaned;
           }
         }

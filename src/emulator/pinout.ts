@@ -9,12 +9,12 @@ export const VIDI_X_PINS = {
   TFT_DC: 21,
   TFT_MOSI: 23,
   TFT_SCLK: 18,
-  TFT_RST: 4,
+  TFT_RST: -1, // No dedicated LCD reset GPIO
   TFT_MISO: 19,
 
   // XPT2046 Resistive Touch Controller
-  TOUCH_CS: 14,
-  TOUCH_IRQ: 2,
+  TOUCH_CS: 4,
+  TOUCH_IRQ: 12,
 
   // MicroSD Card Slot
   SD_CS: 22,
@@ -80,13 +80,13 @@ export const EXPANSION_HEADER_PINS: ExpansionPinDef[] = [
   { headerPin: 11, name: 'GPIO25', gpio: 25, type: 'GPIO', capabilities: ['DAC1', 'SPEAKER'], description: 'Piezo Speaker / Audio DAC1' },
   { headerPin: 12, name: 'GPIO26', gpio: 26, type: 'GPIO', capabilities: ['DAC2', 'TEMP', 'RGB'], description: 'Temp Sensor / 5x WS2812B RGB' },
   { headerPin: 13, name: 'GPIO27', gpio: 27, type: 'GPIO', capabilities: ['ADC2_7', 'SEL_START'], description: 'SELECT(4095) / START(2000)' },
-  { headerPin: 14, name: 'GPIO14', gpio: 14, type: 'GPIO', capabilities: ['MIC_PRE', 'TOUCH_CS'], description: 'Mic Preamp Out / Touch CS' },
-  { headerPin: 15, name: 'GPIO12', gpio: 12, type: 'GPIO', capabilities: ['IR_TX', 'HSPI_MISO'], description: 'IR Transmitter LED' },
+  { headerPin: 14, name: 'GPIO14', gpio: 14, type: 'GPIO', capabilities: ['MIC_PRE'], description: 'Mic Preamp Out' },
+  { headerPin: 15, name: 'GPIO12', gpio: 12, type: 'GPIO', capabilities: ['TOUCH_IRQ', 'IR_TX', 'HSPI_MISO'], description: 'Touch IRQ / IR Transmitter LED' },
   { headerPin: 16, name: 'GPIO13', gpio: 13, type: 'GPIO', capabilities: ['MENU', 'RELAY'], description: 'MENU / Volume / Expansion IO' },
   { headerPin: 17, name: 'GPIO15', gpio: 15, type: 'GPIO', capabilities: ['IR_RX', 'HSPI_CS'], description: 'Infrared Receiver (TSOP)' },
-  { headerPin: 18, name: 'GPIO2', gpio: 2, type: 'GPIO', capabilities: ['STAT_LED', 'TOUCH_IRQ'], description: 'Onboard Blue STAT LED' },
+  { headerPin: 18, name: 'GPIO2', gpio: 2, type: 'GPIO', capabilities: ['STAT_LED'], description: 'Onboard Blue STAT LED' },
   { headerPin: 19, name: 'GPIO0', gpio: 0, type: 'GPIO', capabilities: ['BOOT', 'RESTART'], description: 'BOOT / Restart Button' },
-  { headerPin: 20, name: 'GPIO4', gpio: 4, type: 'GPIO', capabilities: ['TFT_RST', 'GPIO'], description: 'ILI9341 Display Reset' },
+  { headerPin: 20, name: 'GPIO4', gpio: 4, type: 'GPIO', capabilities: ['TOUCH_CS', 'GPIO'], description: 'XPT2046 Touch Chip Select' },
   { headerPin: 21, name: 'GPIO16', gpio: 16, type: 'GPIO', capabilities: ['UART2_RX', 'GPIO'], description: 'Expansion UART2 RX' },
   { headerPin: 22, name: 'GPIO17', gpio: 17, type: 'GPIO', capabilities: ['UART2_TX', 'GPIO'], description: 'Expansion UART2 TX' },
   { headerPin: 23, name: 'GPIO5', gpio: 5, type: 'GPIO', capabilities: ['TFT_CS', 'VSPI_CS0'], description: 'ILI9341 Display CS' },
@@ -118,6 +118,11 @@ export function createInitialPins(): Record<number, PinState> {
         isExternalDriven: false,
       };
     }
+  }
+
+  // The XPT2046 interrupt is active-low and idles high when not touched.
+  if (pins[VIDI_X_PINS.TOUCH_IRQ]) {
+    pins[VIDI_X_PINS.TOUCH_IRQ].digitalValue = 1;
   }
 
   // Virtual direct button aliases (101..108)

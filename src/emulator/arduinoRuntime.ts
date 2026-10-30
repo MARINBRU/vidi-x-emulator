@@ -101,6 +101,13 @@ export function transpileArduinoSketch(sourceCode: string): {
 
   let code = sourceCode.replace(/\r\n/g, '\n');
 
+  // The real-board compatibility shim is unnecessary here: the simulator
+  // already provides tone()/noTone(), and does not run C preprocessor guards.
+  code = code.replace(
+    /^[ \t]*\/\/ BEGIN VIDI X LEGACY TONE COMPATIBILITY[^\n]*\n[\s\S]*?^[ \t]*\/\/ END VIDI X LEGACY TONE COMPATIBILITY[^\n]*(?:\n|$)/gm,
+    ''
+  );
+
   // 1. Strip block and line comments (preserving string literals)
   code = stripCommentsPreservingStrings(code);
 

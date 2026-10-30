@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { BoardRuntimeInstance, VidiXClusterManager } from '../emulator/clusterManager';
-import { exportForRealVidiXHardware } from '../emulator/hardwareExporter';
+import { exportForRealVidiXHardware, needsVidiXDisplayConfig } from '../emulator/hardwareExporter';
 import { DEFAULT_STARTER_CPP, UserProject } from '../emulator/projectStorage';
 import { VidiXBoardView } from './VidiXBoardView';
 
@@ -38,7 +38,7 @@ interface ArduinoCodeStudioProps {
 const PIN_REFERENCE = [
   { macro: 'VIDIIC / MPU-6050', pin: '32 / 33', note: 'I2C 6-DoF Gyro & Accel (0x68)' },
   { macro: 'TFT_CS / TFT_DC', pin: '5 / 21', note: 'ILI9341 320x240 SPI TFT' },
-  { macro: 'TOUCH_CS', pin: '4 / 36', note: 'XPT2046 Resistive Touch' },
+  { macro: 'TOUCH_CS / TOUCH_IRQ', pin: '4 / 12', note: 'XPT2046 Resistive Touch' },
   { macro: 'BTN_LR / UP_DOWN', pin: '34 / 35', note: 'D-Pad Analog (>4000 / ~2000)' },
   { macro: 'Tipka_A / BTN_A', pin: '32', note: 'Action A (INPUT_PULLUP)' },
   { macro: 'Tipka_B / BTN_B', pin: '33 / 27', note: 'Action B / Start-Select' },
@@ -78,7 +78,7 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
 }) => {
   const { state } = selectedBoard;
   const [draftCode, setDraftCode] = useState(state.sketchCode);
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [cookieSavedBadge, setCookieSavedBadge] = useState(false);
   const [serialInput, setSerialInput] = useState('');
 
@@ -298,23 +298,31 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => {
+              onClick={async () => {
                 const outCode = isPythonProject
                   ? draftCode
                   : exportForRealVidiXHardware(
                       draftCode,
                       state.sketchName || state.name
                     );
-                navigator.clipboard.writeText(outCode);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
+                try {
+                  await navigator.clipboard.writeText(outCode);
+                  setCopyStatus('copied');
+                } catch {
+                  setCopyStatus('error');
+                }
+                setTimeout(() => setCopyStatus('idle'), 2500);
               }}
               className="px-2.5 py-1 bg-[#161b28] hover:bg-[#1f2637] text-zinc-300 border border-[#2c3347] text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-              title="Copy code to clipboard"
+              title={isPythonProject
+                ? 'Copy Python code to the clipboard'
+                : 'Copy an .ino for the VIDI X compiler without changing your project'}
             >
               <Copy className="w-3 h-3" />
-              {copied
+              {copyStatus === 'copied'
                 ? 'COPIED!'
+                : copyStatus === 'error'
+                ? 'COPY FAILED'
                 : isPythonProject
                 ? 'COPY .PY'
                 : 'COPY .INO'}
@@ -382,6 +390,17 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
             </button>
           </div>
         </div>
+
+        {!isPythonProject && needsVidiXDisplayConfig(draftCode) && (
+          <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="status">
+            This sketch needs the VIDI X display setup for a real board. Use COPY .INO or EXPORT REAL HW .INO to add it without changing your saved project.
+          </div>
+        )}
+        {copyStatus === 'error' && (
+          <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="alert">
+            Clipboard access failed. Use the export button to download the file instead.
+          </div>
+        )}
 
         {/* Compile Error Banner if any */}
         {state.compileError && (
