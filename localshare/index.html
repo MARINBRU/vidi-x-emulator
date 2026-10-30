@@ -253,6 +253,7 @@
     </div>
     <div class="row">
       <a href="/" class="btn">Home</a>
+      <a href="/textshare/" class="btn">TextShare</a>
       <a href="/vidix-emulator/" class="btn">VIDI X Emulator</a>
     </div>
   </header>
@@ -364,7 +365,7 @@
 
   <script>
     (function () {
-      const CHUNK_BYTE_SIZE = 49152; // 48 KB per chunk (fits comfortably in WebRTC & WS frames)
+      const CHUNK_BYTE_SIZE = 32768; // Keep base64 WebRTC messages comfortably under 64 KB.
       const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
       function detectDeviceType() {
@@ -444,8 +445,9 @@
 
       // Active incoming file states: Map<transferId, IncomingState>
       const incomingFiles = new Map();
-      // Pending outgoing ACK resolvers: Map<transferId_chunkIndex, () => void>
+      // Pending outgoing ACK resolvers and transfer cancellation states.
       const pendingAckResolvers = new Map();
+      const outgoingFiles = new Map();
       // Active WebRTC connections: Map<peerId, { pc, dc, ready }>
       const rtcPeers = new Map();
 
@@ -542,6 +544,10 @@
           }
           case 'relay-end': {
             handleIncomingFileEnd(msg);
+            break;
+          }
+          case 'relay-cancel': {
+            handleRelayCancel(msg);
             break;
           }
           case 'text-share': {
@@ -745,6 +751,7 @@
               if (msg.type === 'relay-meta') handleIncomingFileMeta(msg);
               else if (msg.type === 'relay-chunk') handleIncomingFileChunk(msg);
               else if (msg.type === 'relay-end') handleIncomingFileEnd(msg);
+              else if (msg.type === 'relay-cancel') handleRelayCancel(msg);
               else if (msg.type === 'relay-ack') {
                 const key = msg.transferId + ':' + msg.chunkIndex;
                 const res = pendingAckResolvers.get(key);
@@ -880,104 +887,108 @@
       }
 
       async function sendSingleFileToPeer(file, targetId) {
-        const peerObj = peers.find(function (p) {
-          return p.id === targetId;
-        });
+        const peerObj = peers.find(function (p) { return p.id === targetId; });
         const peerName = peerObj ? peerObj.name : targetId;
-        const transferId =
-          'f-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const transferId = 'f-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
         const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_BYTE_SIZE));
-
         const dc = await ensureRtcChannel(targetId);
         const transportLabel = dc && dc.readyState === 'open' ? 'P2P WebRTC' : 'LAN Relay';
-
         const ui = createTransferUiRow(
           transferId,
           'Sending: ' + file.name + ' → ' + peerName,
           formatBytes(file.size) + ' • ' + transportLabel
         );
+        const outgoing = { targetId: targetId, cancelled: false, reason: '' };
+        outgoingFiles.set(transferId, outgoing);
 
         const sendPacket = function (payloadObj) {
           const payloadWithFrom = Object.assign({}, payloadObj, {
-            fromId: selfId,
-            fromName: myDeviceName,
-            fromDeviceType: myDeviceType,
+            fromId: selfId, fromName: myDeviceName, fromDeviceType: myDeviceType,
           });
           if (dc && dc.readyState === 'open') {
             dc.send(JSON.stringify(payloadWithFrom));
           } else {
+            if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Connection lost');
             wsSend(payloadObj);
           }
         };
 
-        sendPacket({
-          type: 'relay-meta',
-          targetId: targetId,
-          transferId: transferId,
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type || 'application/octet-stream',
-          totalChunks: totalChunks,
-          transport: transportLabel,
-        });
-
-        const startTime = Date.now();
-
-        for (let idx = 0; idx < totalChunks; idx++) {
-          const start = idx * CHUNK_BYTE_SIZE;
-          const end = Math.min(file.size, start + CHUNK_BYTE_SIZE);
-          const slice = file.slice(start, end);
-          const buf = await slice.arrayBuffer();
-          const b64 = arrayBufferToBase64(buf);
-
-          const ackKey = transferId + ':' + idx;
-          const ackPromise = new Promise(function (resolve) {
+        function sendWithAck(packet) {
+          return new Promise(function (resolve, reject) {
+            const key = transferId + ':' + packet.chunkIndex;
             const timeout = setTimeout(function () {
-              pendingAckResolvers.delete(ackKey);
-              resolve();
-            }, 4000);
-            pendingAckResolvers.set(ackKey, function () {
+              pendingAckResolvers.delete(key);
+              reject(new Error('No confirmation from the other device'));
+            }, 15000);
+            pendingAckResolvers.set(key, function (ok = true) {
               clearTimeout(timeout);
-              resolve();
+              pendingAckResolvers.delete(key);
+              if (ok) resolve();
+              else reject(new Error(outgoing.reason || 'Transfer declined'));
             });
+            try { sendPacket(packet); } catch (error) {
+              clearTimeout(timeout);
+              pendingAckResolvers.delete(key);
+              reject(error);
+            }
           });
-
-          sendPacket({
-            type: 'relay-chunk',
-            targetId: targetId,
-            transferId: transferId,
-            chunkIndex: idx,
-            data: b64,
-          });
-
-          // Wait for ACK every 4 chunks to keep flow smooth and avoid buffer overflow
-          if (idx % 4 === 3 || idx === totalChunks - 1) {
-            await ackPromise;
-          } else {
-            pendingAckResolvers.delete(ackKey);
-          }
-
-          const pct = Math.round(((idx + 1) / totalChunks) * 100);
-          ui.barEl.style.width = pct + '%';
-          ui.statusEl.textContent = pct + '%';
         }
 
-        sendPacket({
-          type: 'relay-end',
-          targetId: targetId,
-          transferId: transferId,
-        });
-
-        const elapsedSec = Math.max(0.1, (Date.now() - startTime) / 1000);
-        const speedStr = formatBytes(file.size / elapsedSec) + '/s';
-        ui.statusEl.textContent = 'Sent ✓';
-        ui.subEl.textContent =
-          formatBytes(file.size) + ' • ' + transportLabel + ' • ' + speedStr;
+        const startTime = Date.now();
+        try {
+          sendPacket({
+            type: 'relay-meta', targetId: targetId, transferId: transferId,
+            fileName: file.name, fileSize: file.size,
+            fileType: file.type || 'application/octet-stream',
+            totalChunks: totalChunks, transport: transportLabel,
+          });
+          for (let idx = 0; idx < totalChunks; idx++) {
+            const start = idx * CHUNK_BYTE_SIZE;
+            const buf = await file.slice(start, Math.min(file.size, start + CHUNK_BYTE_SIZE)).arrayBuffer();
+            if (outgoing.cancelled) throw new Error(outgoing.reason || 'Transfer declined');
+            const packet = {
+              type: 'relay-chunk', targetId: targetId, transferId: transferId,
+              chunkIndex: idx, data: arrayBufferToBase64(buf),
+            };
+            // One acknowledgement per window bounds the relay's outstanding data.
+            if (idx % 4 === 3 || idx === totalChunks - 1) await sendWithAck(packet);
+            else sendPacket(packet);
+            const pct = Math.round(((idx + 1) / totalChunks) * 100);
+            ui.barEl.style.width = pct + '%';
+            ui.statusEl.textContent = pct + '%';
+          }
+          sendPacket({ type: 'relay-end', targetId: targetId, transferId: transferId });
+          const elapsedSec = Math.max(0.1, (Date.now() - startTime) / 1000);
+          ui.statusEl.textContent = 'Sent ✓';
+          ui.subEl.textContent = formatBytes(file.size) + ' • ' + transportLabel + ' • ' + formatBytes(file.size / elapsedSec) + '/s';
+        } catch (error) {
+          try { sendPacket({ type: 'relay-cancel', targetId: targetId, transferId: transferId }); } catch {}
+          ui.statusEl.textContent = 'Failed';
+          ui.subEl.textContent = error && error.message ? error.message : 'Transfer interrupted';
+        } finally {
+          outgoingFiles.delete(transferId);
+        }
       }
 
       // ======================================================================
       // Receiving Files & Text
       // ======================================================================
+      function handleRelayCancel(msg) {
+        const state = incomingFiles.get(msg.transferId);
+        if (state && state.fromId === msg.fromId) {
+          incomingFiles.delete(msg.transferId);
+          state.ui.statusEl.textContent = 'Cancelled';
+        }
+        const outgoing = outgoingFiles.get(msg.transferId);
+        if (outgoing && outgoing.targetId === msg.fromId) {
+          outgoing.cancelled = true;
+          outgoing.reason = typeof msg.reason === 'string' ? msg.reason : 'Transfer declined';
+          for (const [key, resolve] of pendingAckResolvers) {
+            if (key.startsWith(msg.transferId + ':')) resolve(false);
+          }
+        }
+      }
+
       function handleIncomingFileMeta(msg) {
         const transferId = msg.transferId;
         if (!transferId || incomingFiles.has(transferId)) return;
@@ -1042,6 +1053,18 @@
         const state = incomingFiles.get(msg.transferId);
         if (!state) return;
         incomingFiles.delete(msg.transferId);
+        let receivedBytes = 0;
+        for (let i = 0; i < state.totalChunks; i++) {
+          if (!state.chunks[i]) {
+            state.ui.statusEl.textContent = 'Incomplete';
+            return;
+          }
+          receivedBytes += state.chunks[i].byteLength;
+        }
+        if (receivedBytes !== state.fileSize) {
+          state.ui.statusEl.textContent = 'Incomplete';
+          return;
+        }
 
         const blob = new Blob(state.chunks, { type: state.fileType });
         const url = URL.createObjectURL(blob);

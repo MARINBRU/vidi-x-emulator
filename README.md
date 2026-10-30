@@ -31,9 +31,17 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 ### 3. Hardware Extension Bus Architecture (`src/emulator/extensions/registry.ts`)
 - Every simulated VIDI X board exposes a 60-pin `ExtensionBusContext` (`readDigital`, `writeDigital`, `readAnalog`, `writeAnalog`, `sendSerialRx`, `emitInterrupt`) managed by `ExtensionRegistry`, ready for plug-and-play hardware extensions.
 
+## TextShare and LocalShare
+
+`/textshare/` lets connected devices paste text, send text files, and copy or download received content. Choose a specific device or all devices. TextShare and LocalShare use the same device rooms, so devices on either page can communicate. TextShare accepts up to 10 MiB per item; larger pasted text is sent as a text file. Files are transferred unchanged, while previews and copied text are decoded as UTF-8.
+
+Devices normally discover each other when they have the same public IP address. If they do not appear, enter the same optional room code on both devices (also supported by LocalShare). Room codes are not passwords, so share only with trusted devices. TextShare relays content through the server in memory without writing it to disk; its history is held in the browser tab until cleared, refreshed, or closed.
+
+On the Ubuntu VM, run `bash setup.sh` from the repository to build and deploy the emulator, LocalShare, and TextShare. The existing LocalShare systemd service handles both sharing pages; no additional Cloudflare Tunnel is needed.
+
 ## Development
 
 ```bash
-npm install
+npm install --legacy-peer-deps
 npm run dev
 ```

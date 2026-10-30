@@ -139,6 +139,7 @@ export function attachLocalShareWebSocket(server) {
     const url = new URL(req.url || '/', 'http://localhost');
     if (
       url.pathname !== '/localshare/ws' &&
+      url.pathname !== '/textshare/ws' &&
       url.pathname !== '/ws'
     ) {
       return;
@@ -200,6 +201,8 @@ export function attachLocalShareWebSocket(server) {
     joinRoom(client.roomKey);
 
     let buffer = Buffer.alloc(0);
+    let fragmentedText = null;
+    let fragmentedTextBytes = 0;
 
     socket.on('data', (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -211,6 +214,7 @@ export function attachLocalShareWebSocket(server) {
       while (buffer.length >= 2) {
         const firstByte = buffer[0];
         const secondByte = buffer[1];
+        const isFinal = (firstByte & 0x80) !== 0;
         const opcode = firstByte & 0x0f;
         const isMasked = (secondByte & 0x80) !== 0;
         let payloadLen = secondByte & 0x7f;
@@ -263,8 +267,34 @@ export function attachLocalShareWebSocket(server) {
           continue;
         }
         if (opcode === 0x01) {
-          // Text frame (JSON)
-          handleClientMessage(client, payload.toString('utf8'), joinRoom);
+          // A WebSocket message can be fragmented, including across UTF-8 characters.
+          if (fragmentedText !== null) {
+            socket.destroy();
+            return;
+          }
+          if (isFinal) {
+            handleClientMessage(client, payload.toString('utf8'), joinRoom);
+          } else {
+            fragmentedText = [payload];
+            fragmentedTextBytes = payload.length;
+          }
+        } else if (opcode === 0x00) {
+          if (fragmentedText === null) {
+            socket.destroy();
+            return;
+          }
+          fragmentedTextBytes += payload.length;
+          if (fragmentedTextBytes > MAX_PAYLOAD_BYTES || fragmentedText.length >= 2048) {
+            socket.destroy();
+            return;
+          }
+          fragmentedText.push(payload);
+          if (isFinal) {
+            const text = Buffer.concat(fragmentedText, fragmentedTextBytes).toString('utf8');
+            fragmentedText = null;
+            fragmentedTextBytes = 0;
+            handleClientMessage(client, text, joinRoom);
+          }
         }
       }
     });
@@ -309,6 +339,7 @@ function handleClientMessage(client, rawText, joinRoom) {
     case 'relay-chunk':
     case 'relay-ack':
     case 'relay-end':
+    case 'relay-cancel':
     case 'text-share': {
       const room = rooms.get(client.roomKey);
       if (!room) return;

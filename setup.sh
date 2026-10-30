@@ -5,6 +5,7 @@ echo "============================================================"
 echo " marinbrusic.from.hr — Automated Ubuntu Server Setup"
 echo "   • /vidix-emulator  (VIDI X Hardware Emulator)"
 echo "   • /localshare      (Local Network File & Text Sharing)"
+echo "   • /textshare       (Local Network Text Sharing)"
 echo "============================================================"
 
 # 1. Install system packages (git, curl, nginx, ufw)
@@ -45,7 +46,7 @@ npm install --legacy-peer-deps
 npm run build
 
 # 5. Deploy VIDI X Emulator to /var/www/html/vidix-emulator
-echo "[5/8] Deploying /vidix-emulator and /localshare static files..."
+echo "[5/8] Deploying /vidix-emulator, /localshare, and /textshare static files..."
 sudo mkdir -p /var/www/html/vidix-emulator
 sudo rm -rf /var/www/html/vidix-emulator/*
 sudo cp -r "$SCRIPT_DIR/dist/"* /var/www/html/vidix-emulator/
@@ -53,6 +54,10 @@ sudo cp -r "$SCRIPT_DIR/dist/"* /var/www/html/vidix-emulator/
 # Deploy LocalShare static frontend to /var/www/html/localshare
 sudo mkdir -p /var/www/html/localshare
 sudo cp "$SCRIPT_DIR/localshare/index.html" /var/www/html/localshare/index.html
+
+# Deploy TextShare; it uses the same signaling service as LocalShare.
+sudo mkdir -p /var/www/html/textshare
+sudo cp "$SCRIPT_DIR"/textshare/{index.html,style.css,app.js} /var/www/html/textshare/
 
 # Update root homepage /var/www/html/index.html
 sudo tee /var/www/html/index.html > /dev/null << 'EOF'
@@ -75,6 +80,7 @@ sudo tee /var/www/html/index.html > /dev/null << 'EOF'
   <div class="links">
     <a href="/vidix-emulator/">VIDI X Emulator &rarr;</a>
     <a href="/localshare/">LocalShare (LAN File Transfer) &rarr;</a>
+    <a href="/textshare/">TextShare (LAN Text Sharing) &rarr;</a>
   </div>
 </body>
 </html>
@@ -120,7 +126,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now localshare.service
 sudo systemctl restart localshare.service
 
-# 7. Configure Nginx for /, /vidix-emulator/, and /localshare/
+# 7. Configure Nginx for the home page, emulator, LocalShare, and TextShare.
 echo "[7/8] Configuring Nginx..."
 sudo tee /etc/nginx/sites-available/default > /dev/null << 'EOF'
 server {
@@ -168,7 +174,30 @@ server {
         try_files $uri $uri/ /localshare/index.html;
     }
 
-    # 3. Root Home Page (/)
+    # 3. TextShare (/textshare) uses the same LocalShare relay and rooms.
+    location = /textshare {
+        return 301 /textshare/;
+    }
+
+    location = /textshare/ws {
+        proxy_pass http://127.0.0.1:3080/textshare/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location /textshare/ {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /textshare/index.html;
+    }
+
+    # 4. Root Home Page (/)
     location / {
         try_files $uri $uri/ =404;
     }
@@ -186,7 +215,8 @@ sudo ufw default allow outgoing
 sudo ufw --force enable
 
 echo "============================================================"
-echo " DONE! Both apps are live:"
+echo " DONE! Apps are deployed:"
 echo "   • https://marinbrusic.from.hr/vidix-emulator"
 echo "   • https://marinbrusic.from.hr/localshare"
+echo "   • https://marinbrusic.from.hr/textshare"
 echo "============================================================"

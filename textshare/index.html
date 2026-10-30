@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TextShare</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-title">
+      <h1>TextShare</h1>
+      <span id="connectionStatus" class="connection" role="status">Connecting…</span>
+    </div>
+    <nav aria-label="Other pages">
+      <a href="/">Home</a>
+      <a href="/localshare/">LocalShare</a>
+      <a href="/vidix-emulator/">VIDI X Emulator</a>
+    </nav>
+  </header>
+
+  <main>
+    <noscript>TextShare needs JavaScript to connect to other devices.</noscript>
+
+    <section class="panel" aria-labelledby="device-heading">
+      <div class="section-heading">
+        <h2 id="device-heading">Your device</h2>
+        <span id="roomStatus" class="muted">Finding your network…</span>
+      </div>
+      <div class="settings">
+        <div class="field">
+          <label for="deviceName">Device name</label>
+          <div class="field-row">
+            <input id="deviceName" type="text" maxlength="40" autocomplete="off" />
+            <button id="saveName" type="button">Save name</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="roomCode">Room code <span class="muted">(optional)</span></label>
+          <div class="field-row">
+            <input id="roomCode" type="text" maxlength="24" placeholder="Automatic" autocomplete="off" />
+            <button id="joinRoom" type="button">Join room</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint">Devices on the same connection appear automatically. If they don't, enter the same room code on both devices. Clear the code to return to automatic discovery.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="devices-heading">
+      <div class="section-heading">
+        <h2 id="devices-heading">Other devices <span id="peerCount">(0)</span></h2>
+      </div>
+      <p class="hint">Open TextShare or LocalShare on the other device and keep it open.</p>
+      <div id="devicesList" class="devices-list">
+        <p class="empty">Waiting for other devices…</p>
+      </div>
+      <div class="recipient field">
+        <label for="recipient">Send to</label>
+        <select id="recipient" aria-describedby="recipient-help">
+          <option value="">Choose a device</option>
+        </select>
+        <p id="recipient-help" class="hint">Choose one device or select all devices.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="send-heading">
+      <h2 id="send-heading">Send text</h2>
+      <label class="sr-only" for="textInput">Text to send</label>
+      <textarea id="textInput" placeholder="Paste or type text here" spellcheck="false"></textarea>
+      <div class="actions">
+        <button id="pasteText" type="button">Paste</button>
+        <button id="sendText" class="primary" type="button" disabled>Send text</button>
+      </div>
+      <p class="hint">Text is sent exactly as entered. Large text is sent as a .txt file.</p>
+      <div class="file-section">
+        <h3>Send text files</h3>
+        <div class="file-row">
+          <label for="fileInput" class="sr-only">Choose text files</label>
+          <input id="fileInput" type="file" multiple accept="text/*,.txt,.md,.csv,.tsv,.log,.json,.xml,.yaml,.yml,.ini,.html,.css,.js,.ts,.py,.ino,.cpp,.c,.h" />
+          <button id="sendFiles" type="button" disabled>Send selected files</button>
+        </div>
+        <p class="hint">Files are sent unchanged; previews use UTF-8. Maximum 10 MiB per text or file.</p>
+      </div>
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="history-heading">
+      <div class="section-heading">
+        <h2 id="history-heading">Received and sent</h2>
+        <button id="clearHistory" type="button">Clear history</button>
+      </div>
+      <div id="history">
+        <p class="empty">Nothing shared yet.</p>
+      </div>
+      <p class="hint">History stays in this tab until it is cleared, refreshed, or closed. The server relays data in memory without saving it to disk. Room codes are not passwords; share only with people you trust.</p>
+    </section>
+  </main>
+</body>
+</html>
