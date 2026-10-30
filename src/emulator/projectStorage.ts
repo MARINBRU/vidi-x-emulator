@@ -2,6 +2,7 @@ import { BLOCK_TEMPLATES, BlockProgram, compileBlocksToArduino } from './blockly
 import { EXAMPLE_SKETCHES } from './exampleSketches';
 import { addVidiXHardwareSupport } from './hardwareExporter';
 import starterPython from '../../examples/CircuitPythonStarter/code.py?raw';
+import legacyStarterPythonV2 from './legacy/python-starter-v2.py?raw';
 
 export interface UserProject {
   id: string;
@@ -227,6 +228,7 @@ while True:
 // Keep the standalone hardware file and the editor starter identical.
 export const DEFAULT_STARTER_PYTHON = starterPython;
 const PREMADE_PYTHON_GYRO = starterPython.replace('USE_MPU6050 = False', 'USE_MPU6050 = True');
+const LEGACY_PYTHON_GYRO_V2 = legacyStarterPythonV2.replace('USE_MPU6050 = False', 'USE_MPU6050 = True');
 
 const PREMADE_VIDILAB_QUIZ_PY = `# Official VidiLAB CircuitPython Quiz (8080.py from VidiLAB-com/VIDI-X-Primjeri)
 import board
@@ -602,7 +604,7 @@ export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
     name: 'Gyroscope Horizon & Tilt Ball (CircuitPython + MPU-6050)',
     subtitle: 'External MPU-6050 via VIDIIC (SCL=32 / SDA=33)',
     description:
-      'Tilt using SENSORS / GYRO or the D-pad. A real board requires an external MPU-6050 and its libraries; use MENU, not A/B, while VIDIIC is active.',
+      'Tilt using SENSORS / GYRO or the D-pad. A real board requires an external MPU-6050 but no sensor library; use MENU, not A/B, while VIDIIC is active.',
     category: 'hardware-demo',
     badge: 'PYTHON + GYRO',
     mode: 'python',
@@ -853,6 +855,16 @@ function sanitizeLoadedProjects(projects: UserProject[]): {
       changed = true;
       next.sketchCode = next.name.startsWith('Gyroscope Horizon & Tilt Ball (CircuitPython + MPU-6050)')
         ? PREMADE_PYTHON_GYRO : DEFAULT_STARTER_PYTHON;
+    }
+
+    // The previous CircuitPython 9 starter shipped in two unedited variants;
+    // update each exactly, without touching edited copies or their project IDs.
+    if (next.mode === 'python' && next.sketchCode === legacyStarterPythonV2) {
+      changed = true;
+      next.sketchCode = DEFAULT_STARTER_PYTHON;
+    } else if (next.mode === 'python' && next.sketchCode === LEGACY_PYTHON_GYRO_V2) {
+      changed = true;
+      next.sketchCode = PREMADE_PYTHON_GYRO;
     }
 
     // Restore built-in starter projects if they were previously converted to another mode

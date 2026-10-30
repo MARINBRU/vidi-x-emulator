@@ -9,15 +9,20 @@ import sys
 import types
 
 source = open(sys.argv[1], encoding="utf-8").read()
-use_mpu = sys.argv[2] == "mpu"
+scenario = sys.argv[2]
+use_mpu = scenario != "default"
+address = 0x69 if scenario == "mpu69" else 0x68
 if use_mpu:
     source = source.replace("USE_MPU6050 = False", "USE_MPU6050 = True", 1)
+if address == 0x69:
+    source = source.replace("MPU6050_ADDRESS = 0x68", "MPU6050_ADDRESS = 0x69", 1)
 
 claims = {}
 digital = {}
 terminals = []
 frame = 0
 imports = []
+buses = []
 
 
 def claim(pin, owner):
@@ -150,31 +155,59 @@ class AnalogIn:
 
 
 class I2C:
-    __slots__ = ()
+    __slots__ = ("locked", "deinitialized", "transactions")
 
     def __init__(self):
+        if scenario == "init-error":
+            raise RuntimeError("VIDIIC pins unavailable")
         claim(32, "i2c")
         claim(33, "i2c")
+        self.locked, self.deinitialized = False, False
+        self.transactions = []
+        buses.append(self)
 
+    def try_lock(self):
+        assert not self.deinitialized and not self.locked
+        if scenario == "busy":
+            return False
+        self.locked = True
+        return True
 
-class MPU6050:
-    __slots__ = ("i2c",)
+    def unlock(self):
+        assert self.locked and not self.deinitialized
+        self.locked = False
 
-    def __init__(self, i2c):
-        assert isinstance(i2c, I2C)
-        self.i2c = i2c
+    def deinit(self):
+        assert not self.locked and not self.deinitialized
+        self.deinitialized = True
+        assert claims.pop(32) == claims.pop(33) == "i2c"
 
-    @property
-    def acceleration(self):
-        return 4.905, 0.0, 8.4957
+    def check(self, actual_address):
+        assert not self.deinitialized and self.locked, "I2C transaction without a lock"
+        if scenario == "missing" or actual_address != address:
+            raise OSError("No I2C device at address")
 
-    @property
-    def gyro(self):
-        return 0.0, 0.0, 0.0
+    def writeto(self, actual_address, data):
+        self.check(actual_address)
+        assert isinstance(data, bytes) and len(data) == 2
+        self.transactions.append(("write", actual_address, bytes(data)))
+        if scenario == "config-error" and data[0] == 0x1C:
+            raise ValueError("configuration failed")
 
-    @property
-    def temperature(self):
-        return 25.0
+    def writeto_then_readfrom(self, actual_address, out, incoming):
+        self.check(actual_address)
+        assert isinstance(out, bytes) and isinstance(incoming, bytearray)
+        self.transactions.append(("read", actual_address, bytes(out), len(incoming)))
+        if out == bytes([0x75]) and len(incoming) == 1:
+            incoming[0] = 0xFF if scenario == "bad-id" else 0x68
+            return
+        assert out == bytes([0x3B]) and len(incoming) == 14
+        if scenario == "read-error" and frame >= 2:
+            raise OSError("sensor disconnected")
+        # Negative values exercise signed big-endian conversion and deg/s scaling.
+        values = (8192, -4096, 14000, -500, 3930, -5240, 13100)
+        for idx, value in enumerate(values):
+            incoming[2 * idx:2 * idx + 2] = value.to_bytes(2, "big", signed=True)
 
 
 class StopLoop(Exception):
@@ -184,6 +217,8 @@ class StopLoop(Exception):
 def sleep(seconds):
     global frame
     assert seconds > 0
+    if seconds >= 0.1:  # Sensor wake delay is not an animation frame.
+        return
     frame += 1
     if frame == 5:
         raise StopLoop()
@@ -205,18 +240,15 @@ font = Font()
 module("terminalio", FONT=font, Terminal=Terminal)
 module("digitalio", DigitalInOut=DigitalInOut, Pull=types.SimpleNamespace(UP="UP"))
 module("analogio", AnalogIn=AnalogIn)
-module("time", sleep=sleep)
+module("time", sleep=sleep, monotonic=lambda: frame / 4)
 module("math", degrees=math.degrees, atan2=math.atan2, sqrt=math.sqrt)
-if use_mpu:
-    module("adafruit_mpu6050", MPU6050=MPU6050)
-
 original_import = builtins.__import__
-allowed = {"time", "board", "displayio", "terminalio", "analogio", "digitalio", "math", "adafruit_mpu6050"}
+allowed = {"time", "board", "displayio", "terminalio", "analogio", "digitalio", "math"}
 
 
 def guarded_import(name, *args, **kwargs):
     imports.append(name)
-    if name not in allowed or (name == "adafruit_mpu6050" and not use_mpu):
+    if name not in allowed:
         raise ImportError("Unexpected or missing library: " + name)
     return original_import(name, *args, **kwargs)
 
@@ -228,22 +260,46 @@ except StopLoop:
     pass
 
 assert frame == 5
-assert isinstance(display.root_group, Group) and len(display.root_group.children) == 4
+assert isinstance(display.root_group, Group) and len(display.root_group.children) == 5
 assert not hasattr(display, "fill") and not hasattr(display, "text")
 assert scope["ball_bitmap"].pixels[12 * 24 + 12] == 2
 assert 0 in scope["ball_colors"].transparent
-assert scope["score"] == 2 and len(terminals[1].writes) == 3
-assert terminals[1].writes[-1].startswith("\rSCORE: 2")
+assert scope["score"] == 2 and len(terminals[2].writes) == 3
+assert terminals[2].writes[-1].startswith("\rSCORE: 2")
 assert digital[2].value is True
 assert scope["ball"].x == scope["ball_x"] - 12
 assert scope["ball"].y == scope["ball_y"] - 12
-if use_mpu:
-    assert claims[32] == claims[33] == "i2c" and claims[13] == "digital"
-    assert scope["ball_x"] > 160  # Tilt moves the ball after D-pad inputs.
-    assert not hasattr(scope["mpu"], "roll") and not hasattr(scope["mpu"], "pitch")
-    assert "adafruit_mpu6050" in imports
-else:
+assert "adafruit_mpu6050" not in imports
+if not use_mpu:
     assert claims[32] == "digital" and 33 not in claims and 13 not in claims
-    assert scope["ball_x"] == 150
-    assert "adafruit_mpu6050" not in imports
-print("PASS " + ("optional MPU-6050" if use_mpu else "no external libraries"))
+    assert not buses and scope["ball_x"] == 150
+    print("PASS no external libraries")
+elif scenario in ("mpu68", "mpu69"):
+    assert len(buses) == 1 and not buses[0].locked and not buses[0].deinitialized
+    assert claims[32] == claims[33] == "i2c" and claims[13] == "digital"
+    assert scope["mpu_ready"] and scope["ball_x"] > 160
+    assert (scope["ax"], scope["ay"], scope["az"]) == (8192, -4096, 14000)
+    assert (scope["gx"], scope["gy"], scope["gz"]) == (30.0, -40.0, 100.0)
+    assert any("GYRO: 30,-40,100 deg/s" in text for text in terminals[1].writes)
+    assert buses[0].transactions[:4] == [
+        ("read", address, bytes([0x75]), 1),
+        ("write", address, bytes([0x6B, 0x00])),
+        ("write", address, bytes([0x1C, 0x00])),
+        ("write", address, bytes([0x1B, 0x00])),
+    ]
+    assert all(tx[1] == address for tx in buses[0].transactions)
+    print("PASS optional MPU-6050 at " + hex(address))
+else:
+    assert claims[13] == "digital" and 32 not in claims and 33 not in claims
+    assert not scope["mpu_ready"] and scope["i2c"] is None
+    if scenario == "init-error":
+        assert not buses
+    else:
+        assert buses[0].deinitialized
+    assert any("D-PAD ONLY" in text for text in terminals[1].writes)
+    if scenario == "read-error":
+        assert any("MPU READ ERROR" in text for text in terminals[1].writes)
+        assert scope["ball_x"] > 150  # It moved before the sensor disconnected.
+    else:
+        assert scope["ball_x"] == 150
+    print("PASS fallback " + scenario)

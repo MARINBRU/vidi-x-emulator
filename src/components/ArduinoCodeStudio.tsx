@@ -54,7 +54,7 @@ const PIN_REFERENCE = [
 ];
 
 const PYTHON_API_REFERENCE = [
-  { macro: 'MPU-6050 (optional)', pin: 'board.VIDIIC()', note: 'External sensor + library; acceleration (m/s²), gyro (rad/s)' },
+  { macro: 'MPU-6050 (optional)', pin: 'board.VIDIIC()', note: 'External sensor; gyro example reads I2C without a library' },
   { macro: 'VIDIIC / A / B', pin: 'GPIO 32 / 33', note: 'Shared pins: A/B unavailable while I2C is in use' },
   { macro: 'board.DISPLAY', pin: 'ILI9341', note: 'Set display.root_group to a displayio.Group' },
   { macro: 'displayio', pin: 'Scene graph', note: 'Bitmap, Palette, TileGrid, Group; built-in terminalio for text' },
@@ -400,6 +400,11 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
         {isPythonProject && /# VIDI X CircuitPython \(.py\)/.test(draftCode) && /mpu\.(roll|pitch)|display\.(fill_rectangle|circle|text)\s*\(/.test(draftCode) && (
           <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="status">
             This edited older starter uses simulator-only display or gyro methods. Its code is unchanged; create a new Python project for a hardware-compatible starter and copy your changes across.
+          </div>
+        )}
+        {isPythonProject && /^\s*(?:import\s+adafruit_mpu6050\b|from\s+adafruit_mpu6050\s+import\b)/m.test(draftCode) && (
+          <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="status">
+            This project contains an adafruit_mpu6050 import. If that code runs on the board, it needs the library. The updated Gyroscope premade reads an external sensor without it; your code remains unchanged.
           </div>
         )}
         {copyStatus === 'error' && (

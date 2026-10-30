@@ -271,6 +271,71 @@ export function createPythonRuntimeEnv(
     }
   };
 
+  // Minimal register-level VIDIIC MPU-6050 simulation. Real CircuitPython
+  // requires an I2C lock even for combined register reads.
+  const makeI2cError = (name: string, message: string): Error => {
+    const error = new Error(message);
+    error.name = name;
+    return error;
+  };
+  const makeVidiic = () => {
+    let locked = false;
+    let deinitialized = false;
+    let awake = false;
+    const check = (address: number) => {
+      if (deinitialized) throw makeI2cError('ValueError', 'I2C has been deinitialized');
+      if (!locked) throw makeI2cError('RuntimeError', 'I2C is not locked');
+      // Both MPU-6050 address variants are modeled; AD0 chooses on hardware.
+      if (address !== 0x68 && address !== 0x69) throw makeI2cError('OSError', 'No I2C device');
+    };
+    return {
+      __bus: 'VIDIIC', scl: 32, sda: 33,
+      get deinitialized() { return deinitialized; },
+      try_lock: () => {
+        if (deinitialized) throw makeI2cError('ValueError', 'I2C has been deinitialized');
+        if (locked) return false;
+        locked = true;
+        return true;
+      },
+      unlock: () => { locked = false; },
+      deinit: () => { deinitialized = true; locked = false; },
+      writeto: (address: number, data: ArrayLike<number>) => {
+        check(address);
+        if (data[0] === 0x6b) awake = (data[1] & 0x40) === 0;
+      },
+      writeto_then_readfrom: (address: number, out: ArrayLike<number>, input: Uint8Array) => {
+        check(address);
+        if (out[0] === 0x75) { input[0] = 0x68; return; }
+        if (out[0] !== 0x3b || input.length < 14) {
+          throw makeI2cError('OSError', 'Unsupported MPU register read');
+        }
+        const sensors = callbacks.getSensors?.();
+        const roll = ((sensors?.gyroRoll ?? 0) * Math.PI) / 180;
+        const pitch = ((sensors?.gyroPitch ?? 0) * Math.PI) / 180;
+        const raw = awake ? [
+          16384 * Math.sin(roll),
+          16384 * Math.sin(pitch),
+          16384 * Math.cos(roll) * Math.cos(pitch),
+          ((sensors?.temperatureC ?? 24.5) - 36.53) * 340,
+          (sensors?.gyroRateX ?? 0) * (180 / Math.PI) * 131,
+          (sensors?.gyroRateY ?? 0) * (180 / Math.PI) * 131,
+          (sensors?.gyroRateZ ?? 0) * (180 / Math.PI) * 131,
+        ] : [0, 0, 0, 0, 0, 0, 0];
+        raw.forEach((value, index) => {
+          const signed = Math.max(-32768, Math.min(32767, Math.round(value)));
+          const unsigned = signed & 0xffff;
+          input[index * 2] = unsigned >> 8;
+          input[index * 2 + 1] = unsigned & 0xff;
+        });
+      },
+    };
+  };
+  let vidiic: ReturnType<typeof makeVidiic> | undefined;
+  const getVidiic = () => {
+    if (!vidiic || vidiic.deinitialized) vidiic = makeVidiic();
+    return vidiic;
+  };
+
   // Official CircuitPython VIDI X V1.1 `board` module (from ports/espressif/boards/vidi_x/pins.c)
   const boardDisplayObj = {
     width: 320,
@@ -425,9 +490,9 @@ export function createPythonRuntimeEnv(
     GPIO39: 39,
     EXP26: 39,
     SPI: () => ({ __bus: 'SPI', sck: 18, mosi: 23, miso: 19 }),
-    I2C: () => ({ __bus: 'I2C', scl: 32, sda: 33 }),
-    STEMMA_I2C: () => ({ __bus: 'VIDIIC', scl: 32, sda: 33 }),
-    VIDIIC: () => ({ __bus: 'VIDIIC', scl: 32, sda: 33 }),
+    I2C: getVidiic,
+    STEMMA_I2C: getVidiic,
+    VIDIIC: getVidiic,
     DISPLAY: boardDisplayObj,
   };
 
@@ -1102,6 +1167,15 @@ export function createPythonRuntimeEnv(
       math,
       random,
       print,
+      bytes: (values: ArrayLike<number>) => Uint8Array.from(values),
+      bytearray: (value: number | ArrayLike<number>) =>
+        typeof value === 'number' ? new Uint8Array(value) : Uint8Array.from(value),
+      __pyExceptionMatches: (error: unknown, names: string[]) => {
+        if (!(error instanceof Error)) return false;
+        // A stopped VM must never be swallowed by a user's exception handler.
+        if (error.message === '__ABORTED__') return false;
+        return names.includes('Exception') || names.includes(error.name);
+      },
       len: __pyLen,
       str: (v: unknown) => String(v ?? ''),
       int: (v: unknown) => parseInt(String(v), 10) || 0,
@@ -1375,6 +1449,36 @@ export function transpilePythonSketch(pyCode: string): {
 
     // Skip `global x` declarations
     if (/^global\s+/.test(trimmed)) {
+      continue;
+    }
+
+    // A single typed/bare except and/or finally. This preserves Python's
+    // exception filtering rather than swallowing unrelated runtime errors.
+    if (/^try\s*:$/.test(trimmed)) {
+      jsOut.push('try {');
+      indentStack.push(leadingSpaces + 1);
+      declaredVarsStack.push(new Set(declaredVarsStack[declaredVarsStack.length - 1]));
+      continue;
+    }
+    const exceptMatch = trimmed.match(/^except(?:\s+(.+?))?(?:\s+as\s+([A-Za-z_]\w*))?\s*:$/);
+    if (exceptMatch) {
+      if (jsOut[jsOut.length - 1] === '}') jsOut.pop();
+      const rawTypes = (exceptMatch[1] ?? 'Exception').replace(/^\(|\)$/g, '');
+      const types = rawTypes.split(',').map((type) => type.trim()).filter(Boolean);
+      if (!types.length || types.some((type) => !/^[A-Za-z_]\w*$/.test(type))) {
+        throw new Error(`Unsupported Python exception handler: ${trimmed}`);
+      }
+      jsOut.push(`} catch (__pyError) { if (!__pyExceptionMatches(__pyError, ${JSON.stringify(types)})) throw __pyError;`);
+      if (exceptMatch[2]) jsOut.push(`var ${exceptMatch[2]} = __pyError;`);
+      indentStack.push(leadingSpaces + 1);
+      declaredVarsStack.push(new Set(declaredVarsStack[declaredVarsStack.length - 1]));
+      continue;
+    }
+    if (/^finally\s*:$/.test(trimmed)) {
+      if (jsOut[jsOut.length - 1] === '}') jsOut.pop();
+      jsOut.push('} finally {');
+      indentStack.push(leadingSpaces + 1);
+      declaredVarsStack.push(new Set(declaredVarsStack[declaredVarsStack.length - 1]));
       continue;
     }
 
