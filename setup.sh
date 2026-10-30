@@ -8,17 +8,22 @@ echo "   • /localshare      (Local Network File & Text Sharing)"
 echo "   • /textshare       (Local Network Text Sharing)"
 echo "============================================================"
 
+# The package manager may be busy with Ubuntu's unattended upgrades.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/scripts/apt-lock.sh"
+
 # 1. Install system packages (git, curl, nginx, ufw)
 echo "[1/8] Installing system packages (git, curl, nginx, ufw)..."
-sudo apt-get update -y
-sudo apt-get upgrade -y
-sudo apt-get install -y git curl ca-certificates nginx ufw
+echo "Waiting for automatic updates if the package manager is busy (up to 15 minutes)."
+apt_get_with_lock_wait update -y
+apt_get_with_lock_wait upgrade -y
+apt_get_with_lock_wait install -y git curl ca-certificates nginx ufw
 
 # 2. Install Node.js 22 LTS if not already installed
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d 'v')" -lt 20 ]]; then
   echo "[2/8] Installing Node.js 22 LTS..."
   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-  sudo apt-get install -y nodejs
+  apt_get_with_lock_wait install -y nodejs
 else
   echo "[2/8] Node.js $(node -v) already installed."
 fi
@@ -27,14 +32,13 @@ fi
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "[3/8] Installing Cloudflare Tunnel (cloudflared)..."
   curl -fsSL --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-  sudo dpkg -i /tmp/cloudflared.deb
+  apt_get_with_lock_wait install -y /tmp/cloudflared.deb
   rm -f /tmp/cloudflared.deb
 else
   echo "[3/8] cloudflared already installed."
 fi
 
 # 4. Fetch latest code and build VIDI X Emulator
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "[4/8] Fetching latest code and building production bundle..."

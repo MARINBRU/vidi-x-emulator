@@ -37,7 +37,7 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 
 Devices normally discover each other when they have the same public IP address. If they do not appear, enter the same optional room code on both devices (also supported by LocalShare). Room codes are not passwords, so share only with trusted devices. TextShare relays content through the server in memory without writing it to disk; its history is held in the browser tab until cleared, refreshed, or closed.
 
-On the Ubuntu VM, run `bash setup.sh` from the repository to build and deploy the emulator, LocalShare, and TextShare. The existing LocalShare systemd service handles both sharing pages; no additional Cloudflare Tunnel is needed.
+On the Ubuntu VM, run `bash setup.sh` from the repository to build and deploy the emulator, LocalShare, and TextShare. If automatic updates are using apt, setup waits up to 15 minutes for the package lock; it never deletes lock files. The existing LocalShare systemd service handles both sharing pages; no additional Cloudflare Tunnel is needed.
 
 ## Development
 
