@@ -47,6 +47,14 @@ case "$APT_MOCK_MODE" in
     echo 'E: Failed to fetch a package from the repository' >&2
     exit 42
     ;;
+  future-release)
+    echo 'E: Release file for http://archive.ubuntu.com/ubuntu/dists/resolute-updates/InRelease is not valid yet (invalid for another 2h 56min 54s). Updates for this repository will not be applied.' >&2
+    exit 100
+    ;;
+  expired-release)
+    echo 'E: Release file for http://archive.ubuntu.com/ubuntu/dists/resolute-security/InRelease is expired (invalid since 2h ago).' >&2
+    exit 100
+    ;;
 esac
 echo 'Package operation completed'
 `);
@@ -106,6 +114,24 @@ describe('VM setup package lock handling', () => {
     expect(result.attempts).toBe(1);
     expect(result.stderr).toContain('Timed out waiting for the package manager');
     expect(result.calls).toContain('DPkg::Lock::Timeout=0 upgrade -y');
+  });
+
+  it('explains a future-dated release without retrying or disabling date checks', () => {
+    const result = runApt('future-release');
+    expect(result.status).toBe(100);
+    expect(result.attempts).toBe(1);
+    expect(result.stdout).toContain('is not valid yet');
+    expect(result.stderr).toContain('VM clock may be behind');
+    expect(result.stderr).toContain('timedatectl');
+    expect(result.calls).not.toMatch(/Check-Date|Check-Valid-Until|AllowUnauthenticated/);
+  });
+
+  it('explains an expired release without treating it as a lock failure', () => {
+    const result = runApt('expired-release');
+    expect(result.status).toBe(100);
+    expect(result.attempts).toBe(1);
+    expect(result.stderr).toContain('expired repository file');
+    expect(result.stderr).toContain('fresh mirror');
   });
 
   it('passes local package paths to apt with the same lock protection', () => {

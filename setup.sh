@@ -8,12 +8,14 @@ echo "   • /localshare      (Local Network File & Text Sharing)"
 echo "   • /textshare       (Local Network Text Sharing)"
 echo "============================================================"
 
-# The package manager may be busy with Ubuntu's unattended upgrades.
+# Package metadata is time-sensitive; unattended upgrades can also hold apt locks.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/scripts/apt-lock.sh"
+source "$SCRIPT_DIR/scripts/system-clock.sh"
 
 # 1. Install system packages (git, curl, nginx, ufw)
 echo "[1/8] Installing system packages (git, curl, nginx, ufw)..."
+vidix_sync_system_clock
 echo "Waiting for automatic updates if the package manager is busy (up to 15 minutes)."
 apt_get_with_lock_wait update -y
 apt_get_with_lock_wait upgrade -y

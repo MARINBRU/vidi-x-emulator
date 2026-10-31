@@ -34,6 +34,13 @@ apt_get_with_lock_wait() (
     # A transient lock warning can precede an unrelated error after apt
     # acquires the lock. Retry only a terminal lock error, not that warning.
     if ! LC_ALL=C grep -Eq '(^|[[:cntrl:]])E: Could not get lock[[:space:]]' "$log"; then
+      if LC_ALL=C grep -Eq '(^|[[:cntrl:]])E: Release file .* is not valid yet' "$log"; then
+        echo "APT rejected a future-dated repository file. The VM clock may be behind." >&2
+        echo "Run 'timedatectl' to inspect the VM time and network synchronization." >&2
+        echo "Check the VirtualBox host clock and ensure network time (UDP 123) is reachable, then rerun setup." >&2
+      elif LC_ALL=C grep -Eq '(^|[[:cntrl:]])E: Release file .* is expired' "$log"; then
+        echo "APT rejected an expired repository file. Check the VM clock with 'timedatectl' or try a fresh mirror." >&2
+      fi
       return "$status"
     fi
 
