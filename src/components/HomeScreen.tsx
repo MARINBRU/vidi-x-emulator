@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import vidiXCppSkill from '../../docs/vidi-x-cpp/SKILL.md?raw';
 import {
   CookieStorageStats,
   PREMADE_PLAYABLE_PROJECTS,
@@ -46,6 +47,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [renameDraft, setRenameDraft] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
   const [exampleModes, setExampleModes] = useState<Record<string, UserProject['mode']>>({});
+  const [skillCopyMessage, setSkillCopyMessage] = useState('');
+
+  const handleCopySkill = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(vidiXCppSkill);
+      setSkillCopyMessage('Copied.');
+    } catch {
+      setSkillCopyMessage('Copy unavailable. Download the file instead.');
+    }
+  };
+
+  const handleDownloadSkill = () => {
+    const url = URL.createObjectURL(new Blob([vidiXCppSkill], { type: 'text/markdown;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'SKILL.md';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setSkillCopyMessage('');
+  };
 
   const handleStartRename = (proj: UserProject) => {
     setRenamingId(proj.id);
@@ -335,6 +359,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             })}
           </div>
         </section>
+
+        <footer className="border-t border-zinc-800 pt-4 flex flex-wrap items-center gap-3">
+          <span className="text-xs text-zinc-400">VIDI X C++ AI skill</span>
+          <button
+            type="button"
+            onClick={handleCopySkill}
+            aria-label="Copy VIDI X C++ AI skill"
+            className="px-2.5 py-1 bg-[#26262b] hover:bg-[#323238] border border-zinc-700 text-xs text-zinc-200 cursor-pointer"
+          >
+            Copy .md
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadSkill}
+            aria-label="Download VIDI X C++ AI skill"
+            className="px-2.5 py-1 bg-[#26262b] hover:bg-[#323238] border border-zinc-700 text-xs text-zinc-200 cursor-pointer"
+          >
+            Download .md
+          </button>
+          <span role="status" aria-live="polite" className="text-xs text-zinc-400">{skillCopyMessage}</span>
+        </footer>
       </div>
     </div>
   );

@@ -4,17 +4,19 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 
 ## Features
 
-### 1. Full VIDI X v1.1 Onboard Hardware Suite
+The feature list below describes the **simulator's** hardware model. Some controls and sensors use simplified or virtual pin mappings and are not physical wiring instructions. For real-board Arduino C++, use the [VIDI X C++ AI skill](docs/vidi-x-cpp/SKILL.md), which is also available to copy or download at the bottom of the Home screen.
+
+### 1. Simulated Hardware Suite
 - **ILI9341 320×240 16-bit RGB565 TFT Display**: Full pixel framebuffer supporting `Adafruit_ILI9341`, `Adafruit_GFX`, and `TFT_eSPI` APIs (`fillScreen`, `drawPixel`, `drawLine`, `drawRect`, `fillRect`, `drawCircle`, `fillCircle`, `fillTriangle`, `print`, `println`, `printf`, `drawString`, `drawBitmap`, `pushImage`).
 - **XPT2046 Resistive Touchscreen (`TOUCH_CS = 4`, `TOUCH_IRQ = 12`)**: Click and drag directly on the 320×240 screen to trigger `ts.touched()` and `ts.getPoint()` (`x, y, z`).
-- **Authentic VIDI X Buttons (Both Analog Resistor Ladder & Digital Modes)**:
+- **Simulated VIDI X Buttons (Both Analog Resistor Ladder & Digital Modes)**:
   - **D-Pad UP / DOWN (`GPIO 35`)**: Analog resistor ladder (`UP = 4095`, `DOWN = 1950`, `IDLE = 0`) + direct `BTN_UP` / `BTN_DOWN` digital reads.
   - **D-Pad LEFT / RIGHT (`GPIO 34`)**: Analog resistor ladder (`LEFT = 4095`, `RIGHT = 1950`, `IDLE = 0`) + direct `BTN_LEFT` / `BTN_RIGHT` digital reads.
   - **SELECT / START (`GPIO 27`)**: Analog resistor ladder (`SELECT = 4095`, `START = 1950`, `IDLE = 0`) + direct `BTN_SELECT` / `BTN_START` digital reads.
   - **Action Buttons `A` (`GPIO 32`) & `B` (`GPIO 33`)**: Tactile arcade buttons supporting both `INPUT_PULLUP` digital reads and analog reads.
   - **System Keys**: `MENU` / `VOL+` / `VOL-` (`GPIO 13`), `BOOT` (`GPIO 0`), `EN / RESET`, and `ON/OFF` power switch.
 - **Piezo Speaker / DAC1 Audio (`GPIO 25`)**: Real-time Web Audio square-wave synthesizer supporting `tone()`, `noTone()`, and `ledcWriteTone()` with per-board mute and volume controls.
-- **Onboard Environmental & Audio Sensors**:
+- **Virtual Environmental & Audio Sensors**:
   - **MCP9700A Temperature Sensor (`GPIO 26` / `GPIO 39` via jumper)**: Interactive `-10°C` to `60°C` slider ($V_{out} = 500\text{mV} + 10\text{mV}/^\circ\text{C}$).
   - **Photoresistor Light Sensor (`GPIO 39 / SENSOR_VN`)**: Interactive `0%–100%` ambient light slider.
   - **Microphone AGC (`GPIO 36 / SENSOR_VP`)**: Real-time audio waveform generator on ADC1_CH0.
@@ -92,7 +94,7 @@ npm install --legacy-peer-deps
 npm run dev
 ```
 
-To additionally compile the starter, its exports, the new C++ quiz/gyro/bridge and the multiplayer example with a locally installed Arduino CLI, install the ESP32 board package and the LovyanGFX and FastLED libraries, then run:
+To additionally compile the starter, its exports, the C++ quiz/gyro/bridge, the multiplayer example, and the C++ skill's starter and peripheral integration with a locally installed Arduino CLI, install the ESP32 board package and the LovyanGFX and FastLED libraries, then run:
 
 ```bash
 ARDUINO_CLI=arduino-cli npm test

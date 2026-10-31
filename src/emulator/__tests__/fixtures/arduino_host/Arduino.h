@@ -41,8 +41,12 @@ inline void pinMode(int, int) {}
 inline int digitalRead(int) { return HIGH; }
 inline void digitalWrite(int, int) {}
 inline int analogRead(int) { return 0; }
+inline void analogReadResolution(int) {}
+inline unsigned long millis() { return 0; }
 inline void delay(unsigned long) {}
-inline void ledcSetup(int, int, int) {}
+inline bool ledcAttach(int, int, int) { return true; }
+inline double ledcSetup(int, int, int) { return 1; }
+inline bool psramFound() { return true; }
 inline void ledcAttachPin(int, int) {}
 inline void ledcWriteTone(int, int) {}
 inline void ledcDetachPin(int) {}

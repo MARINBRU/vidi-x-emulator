@@ -16,11 +16,22 @@ public:
   BusConfig config() { return {}; }
   void config(const BusConfig &) {}
 };
+struct TouchConfig {
+  int spi_host, freq, pin_sclk, pin_mosi, pin_miso, pin_cs, pin_int;
+  int offset_rotation, x_min, x_max, y_min, y_max;
+  bool bus_shared;
+};
+class Touch_XPT2046 {
+public:
+  TouchConfig config() { return {}; }
+  void config(const TouchConfig &) {}
+};
 class Panel_ILI9341 {
 public:
   PanelConfig config() { return {}; }
   void config(const PanelConfig &) {}
   void setBus(Bus_SPI *) {}
+  void setTouch(Touch_XPT2046 *) {}
 };
 class LGFX_Device {
 public:
@@ -34,6 +45,9 @@ public:
   void setTextColor(int, int = 0) {}
   void setTextSize(int) {}
   void setCursor(int, int) {}
+  void calibrateTouch(uint16_t *, int, int, int) {}
+  void setTouchCalibrate(uint16_t *) {}
+  bool getTouch(uint16_t *, uint16_t *) { return false; }
   template<typename... T> void print(T...) {}
   template<typename... T> void printf(T...) {}
 };
