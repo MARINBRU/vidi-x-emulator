@@ -394,7 +394,7 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
 
         {!isPythonProject && needsVidiXDisplayConfig(draftCode) && (
           <div className="px-3 py-2 border-b border-zinc-700 bg-zinc-900 text-zinc-200 text-xs" role="status">
-            This sketch needs the VIDI X display setup for a real board. Use COPY .INO or EXPORT REAL HW .INO to add it without changing your saved project.
+            This saved sketch is missing the VIDI X display setup. For the VIDI X online compiler, use COPY .INO or EXPORT REAL HW .INO instead of copying the editor text. Your saved code stays unchanged.
           </div>
         )}
         {isPythonProject && /# VIDI X CircuitPython \(.py\)/.test(draftCode) && /mpu\.(roll|pitch)|display\.(fill_rectangle|circle|text)\s*\(/.test(draftCode) && (

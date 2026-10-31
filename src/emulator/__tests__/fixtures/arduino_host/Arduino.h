@@ -15,6 +15,8 @@
 #define INPUT_PULLUP 2
 #define SERIAL_8N1 0
 #define VSPI_HOST 3
+#define PI 3.14159265358979323846
+#define TWO_PI (2.0 * PI)
 
 class String : public std::string {
 public:

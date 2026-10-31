@@ -14,7 +14,7 @@ const extraArgs: string[] = JSON.parse(process.env.ARDUINO_CLI_ARGS || '[]');
 const legacyStarter = readFileSync(new URL('./fixtures/legacy-starter.ino', import.meta.url), 'utf8');
 
 describe('real ESP32 compilation', () => {
-  it.runIf(Boolean(cli))('builds the starters and the multiplayer export', () => {
+  it.runIf(Boolean(cli))('builds starters, maze editor/export, and multiplayer export', () => {
     const temp = mkdtempSync(join(tmpdir(), 'vidix-arduino-'));
     try {
       const sketches = [
@@ -24,6 +24,14 @@ describe('real ESP32 compilation', () => {
           legacyStarter.replace('int score = 0;', 'int score = 42;'),
           'Edited Legacy'
         )],
+        ...(() => {
+          const item = PREMADE_PLAYABLE_PROJECTS.find((project) => project.id === 'premade-3d-maze')!;
+          const code = selectPremadeVariant(item, 'cpp').sketchCode;
+          return [
+            ['MazeEditor', code],
+            ['MazeExport', exportForRealVidiXHardware(code, 'Maze')],
+          ];
+        })(),
         ...(['premade-python-gyro', 'premade-python-quiz', 'premade-sd-logger'] as const).map((id, index) => {
           const item = PREMADE_PLAYABLE_PROJECTS.find((project) => project.id === id)!;
           return [`Example${index}`, exportForRealVidiXHardware(selectPremadeVariant(item, 'cpp').sketchCode, item.name)];

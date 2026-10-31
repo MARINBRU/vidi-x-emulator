@@ -1,6 +1,6 @@
 import { BLOCK_TEMPLATES, BlockProgram, compileBlocksToArduino } from './blocklyEngine';
 import { EXAMPLE_SKETCHES } from './exampleSketches';
-import { addVidiXHardwareSupport } from './hardwareExporter';
+import { addVidiXHardwareSupport, exportForRealVidiXHardware } from './hardwareExporter';
 import { PREMADE_CPP_VARIANTS, PREMADE_PYTHON_VARIANTS, PYTHON_QUIZ } from './premadeVariants';
 import starterPython from '../../examples/CircuitPythonStarter/code.py?raw';
 import legacyStarterPythonV2 from './legacy/python-starter-v2.py?raw';
@@ -303,9 +303,14 @@ const PREMADE_CATALOG: PreMadeProject[] = [
     badge: '3D ENGINE + MINIMAP',
     mode: 'cpp',
     boardCount: 1,
-    sketchCode:
+    // Include the real display and audio setup in the editor itself: copying
+    // the visible code to VIDI X's online compiler must not require a special
+    // export step. Existing saved projects are intentionally left untouched.
+    sketchCode: exportForRealVidiXHardware(
       EXAMPLE_SKETCHES.find((s) => s.id === 'vidi-3d-maze-minimap-coins')?.code ||
-      EXAMPLE_SKETCHES[0].code,
+        EXAMPLE_SKETCHES[0].code,
+      '3D Raycast Maze'
+    ),
   },
   {
     id: 'premade-3d-fps-1p',

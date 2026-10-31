@@ -38,3 +38,26 @@ public:
   template<typename... T> void printf(T...) {}
 };
 }
+
+class LGFX_Sprite {
+public:
+  explicit LGFX_Sprite(lgfx::LGFX_Device *) {}
+  void setPsram(bool) {}
+  void setColorDepth(int) {}
+  bool createSprite(int, int) { return true; }
+  void pushSprite(int, int) {}
+  void fillRect(int, int, int, int, int) {}
+  void drawRect(int, int, int, int, int) {}
+  void fillRoundRect(int, int, int, int, int, int) {}
+  void drawRoundRect(int, int, int, int, int, int) {}
+  void fillCircle(int, int, int, int) {}
+  void fillEllipse(int, int, int, int, int) {}
+  void drawEllipse(int, int, int, int, int) {}
+  void drawFastVLine(int, int, int, int) {}
+  void drawLine(int, int, int, int, int) {}
+  void setTextColor(int, int = 0) {}
+  void setTextSize(int) {}
+  void setCursor(int, int) {}
+  template<typename... T> void print(T...) {}
+  template<typename... T> void printf(T...) {}
+};

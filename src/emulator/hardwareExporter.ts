@@ -336,7 +336,7 @@ export function exportForRealVidiXHardware(sketchCode: string, sketchName = 'vid
     `// ============================================================================`,
     `// VIDI X v1.1 (ESP32-WROVER) Real Hardware Export — ${sketchName}`,
     `// Target Board in Arduino IDE: "ESP32 Wrover Module" (PSRAM: Enabled)`,
-    `// Required Libraries: LovyanGFX, FastLED, Adafruit_ILI9341 / TFT_eSPI`,
+    `// Required libraries are listed in the #include lines below`,
     `// ============================================================================`,
     ``,
   ].join('\n');

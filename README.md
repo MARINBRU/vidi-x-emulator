@@ -53,6 +53,8 @@ New C++ starter projects include the LovyanGFX display configuration needed for 
 
 A standalone copy of the fresh starter is also available at [`examples/VIDIXStarter/VIDIXStarter.ino`](examples/VIDIXStarter/VIDIXStarter.ino). It needs LovyanGFX and FastLED. When using Arduino IDE, choose **ESP32 Wrover Module** and enable PSRAM. Arbitrary projects may also use simulator-only APIs or need additional libraries; review their generated code before uploading to hardware. The display has no dedicated reset GPIO (`pin_rst = -1`); GPIO 4 is touch chip select.
 
+The C++ maze now includes its VIDI X LovyanGFX display setup in the editor itself. A standalone copy is available at [`examples/VIDIXMaze/VIDIXMaze.ino`](examples/VIDIXMaze/VIDIXMaze.ino): paste it into the [VIDI X online editor](https://code.vidi-x.org/) or upload the file, then compile and upload it to the board. Existing saved maze projects are left untouched; for an older saved copy, use **COPY .INO** or **EXPORT REAL HW .INO** to add the missing display configuration to a separate output. The FastLED `No hardware SPI pins defined` message is an informational FastLED message, not the `LGFX` compilation error; it does not configure the LCD's LovyanGFX SPI bus.
+
 ## Running the CircuitPython starter on VIDI X
 
 The new Python starter uses the built-in `board.DISPLAY`, `displayio`, `terminalio`, `digitalio`, and `analogio` APIs in CircuitPython 9. It does **not** require an external sensor or extra libraries by default. The D-pad moves the ball and A increases the score. The starter does not include touch, sound, or RGB LED libraries.
