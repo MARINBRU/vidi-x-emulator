@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   CookieStorageStats,
   PREMADE_PLAYABLE_PROJECTS,
+  selectPremadeVariant,
   PreMadeProject,
   UserProject,
 } from '../emulator/projectStorage';
@@ -44,6 +45,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
+  const [exampleModes, setExampleModes] = useState<Record<string, UserProject['mode']>>({});
 
   const handleStartRename = (proj: UserProject) => {
     setRenamingId(proj.id);
@@ -280,24 +282,33 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               Pre-Made Projects
             </h2>
             <span className="text-xs text-zinc-500">
-              Controls: WASD / Arrows, Space / Z (A), X (B)
+              Choose a language · WASD / Arrows, Space / Z (A), X (B)
             </span>
           </div>
 
           <div className="border border-zinc-800 divide-y divide-zinc-800 bg-[#1c1c1f]">
-            {PREMADE_PLAYABLE_PROJECTS.map((item) => (
-              <div
+            {PREMADE_PLAYABLE_PROJECTS.map((item) => {
+              const mode = exampleModes[item.id] ?? item.mode;
+              const selectedExample = selectPremadeVariant(item, mode);
+              return <div
                 key={item.id}
+                title={item.description}
                 className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 hover:bg-[#222226]"
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <span className="px-1.5 py-0.5 bg-[#2a2a30] border border-zinc-700 text-[11px] font-mono text-zinc-300 shrink-0">
-                    {item.mode === 'cpp'
-                      ? 'C++'
-                      : item.mode === 'python'
-                      ? 'Python'
-                      : 'Blocks'}
-                  </span>
+                  <label className="sr-only" htmlFor={`language-${item.id}`}>Language for {item.name}</label>
+                  <select
+                    id={`language-${item.id}`}
+                    value={mode}
+                    onChange={(event) => setExampleModes((current) => ({
+                      ...current, [item.id]: event.target.value as UserProject['mode'],
+                    }))}
+                    className="bg-[#2a2a30] border border-zinc-700 px-2 py-1 text-xs text-zinc-200 cursor-pointer shrink-0"
+                  >
+                    <option value="cpp">C++</option>
+                    <option value="python">Python</option>
+                    {item.blockProgram && <option value="blocks">Blocks</option>}
+                  </select>
                   <span className="px-1.5 py-0.5 bg-[#222226] border border-zinc-800 text-[11px] text-zinc-400 shrink-0">
                     {item.boardCount === 2 ? '2 Boards' : '1 Board'}
                   </span>
@@ -308,20 +319,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
-                    onClick={() => onPlayPreMadeProject(item)}
+                    onClick={() => onPlayPreMadeProject(selectedExample)}
                     className="px-3 py-1 bg-zinc-200 hover:bg-white text-zinc-900 font-medium text-xs cursor-pointer"
                   >
                     {item.boardCount === 2 ? 'Run (2 Boards)' : 'Run'}
                   </button>
                   <button
-                    onClick={() => onClonePreMadeToUserProjects(item, true)}
+                    onClick={() => onClonePreMadeToUserProjects(selectedExample, true)}
                     className="px-2.5 py-1 bg-[#26262b] hover:bg-[#323238] border border-zinc-700 text-xs text-zinc-200 cursor-pointer"
                   >
                     Copy to Saved Projects
                   </button>
                 </div>
-              </div>
-            ))}
+              </div>;
+            })}
           </div>
         </section>
       </div>

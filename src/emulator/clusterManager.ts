@@ -24,6 +24,7 @@ export interface BoardRuntimeInstance {
   vm: ArduinoSketchVM;
   bootTimestamp: number;
   uartRxBuffers: { 0: string; 2: string };
+  uart2Pins: { tx: number; rx: number };
   wirelessQueue: Array<{
     protocol: WirelessProtocol;
     fromMac: string;
@@ -250,6 +251,7 @@ export class VidiXClusterManager {
       audio,
       bootTimestamp: Date.now(),
       uartRxBuffers: { 0: '', 2: '' },
+      uart2Pins: { tx: VIDI_X_PINS.UART2_TX, rx: VIDI_X_PINS.UART2_RX },
       wirelessQueue: [],
       ledcChannels: {},
       vm: null as unknown as ArduinoSketchVM,
@@ -394,6 +396,7 @@ export class VidiXClusterManager {
       },
       getTouch: () => inst.state.touch,
       getSensors: () => inst.state.sensors,
+      onConfigureUart: (tx: number, rx: number) => { inst.uart2Pins = { tx, rx }; },
       onSerialPrint: (uart: 0 | 2, text: string) => {
         if (uart === 0) {
           this.appendSerialLog(inst, text, 'tx');
@@ -538,6 +541,7 @@ export class VidiXClusterManager {
     inst.state.audio.active = false;
     inst.state.audio.frequency = 0;
     inst.state.compileError = null;
+    inst.uart2Pins = { tx: VIDI_X_PINS.UART2_TX, rx: VIDI_X_PINS.UART2_RX };
     inst.bootTimestamp = Date.now();
     inst.state.uptimeMs = 0;
     inst.state.running = true;
@@ -913,6 +917,13 @@ export class VidiXClusterManager {
     this.addWireConnection(boardBId, 26, boardAId, 14, '#10b981', 'GPIO26->GPIO14');
   }
 
+  public autoWireSafeBridge(boardAId: string, boardBId: string): void {
+    this.addWireConnection(boardAId, 15, boardBId, 27, '#22d3ee', 'GPIO15 TX -> GPIO27 RX');
+    this.addWireConnection(boardBId, 15, boardAId, 27, '#a855f7', 'GPIO15 TX -> GPIO27 RX');
+    this.addWireConnection(boardAId, 26, boardBId, 14, '#f59e0b', 'GPIO26 -> GPIO14');
+    this.addWireConnection(boardBId, 26, boardAId, 14, '#10b981', 'GPIO26 -> GPIO14');
+  }
+
   private propagateWiresFromBoard(sourceBoardId: string): void {
     const srcBoard = this.boards.get(sourceBoardId);
     if (!srcBoard || !srcBoard.state.poweredOn) return;
@@ -951,25 +962,16 @@ export class VidiXClusterManager {
   }
 
   private forwardWiredUart2(sourceBoardId: string, data: string): void {
+    const source = this.boards.get(sourceBoardId);
+    if (!source) return;
     for (const wire of this.wireConnections) {
-      if (
-        wire.fromBoardId === sourceBoardId &&
-        wire.fromGpio === VIDI_X_PINS.UART2_TX &&
-        wire.toGpio === VIDI_X_PINS.UART2_RX
-      ) {
-        const dst = this.boards.get(wire.toBoardId);
-        if (dst && dst.state.poweredOn) {
-          dst.uartRxBuffers[2] += data;
-        }
-      } else if (
-        wire.toBoardId === sourceBoardId &&
-        wire.toGpio === VIDI_X_PINS.UART2_TX &&
-        wire.fromGpio === VIDI_X_PINS.UART2_RX
-      ) {
-        const dst = this.boards.get(wire.fromBoardId);
-        if (dst && dst.state.poweredOn) {
-          dst.uartRxBuffers[2] += data;
-        }
+      const forward = wire.fromBoardId === sourceBoardId && wire.fromGpio === source.uart2Pins.tx;
+      const reverse = wire.toBoardId === sourceBoardId && wire.toGpio === source.uart2Pins.tx;
+      const destinationId = forward ? wire.toBoardId : reverse ? wire.fromBoardId : null;
+      const destinationGpio = forward ? wire.toGpio : wire.fromGpio;
+      const destination = destinationId ? this.boards.get(destinationId) : undefined;
+      if (destination?.state.poweredOn && destinationGpio === destination.uart2Pins.rx) {
+        destination.uartRxBuffers[2] += data;
       }
     }
   }

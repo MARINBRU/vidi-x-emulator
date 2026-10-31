@@ -62,6 +62,7 @@ export interface RuntimeCallbacks {
   onUpdateRgbLeds: (leds: RGBLedColor[]) => void;
   getTouch: () => TouchState;
   getSensors?: () => SensorState;
+  onConfigureUart?: (tx: number, rx: number) => void;
   onSerialPrint: (uart: 0 | 2, text: string) => void;
   onSerialAvailable: (uart: 0 | 2) => number;
   onSerialReadString: (uart: 0 | 2) => string;
@@ -101,8 +102,12 @@ export function transpileArduinoSketch(sourceCode: string): {
 
   let code = sourceCode.replace(/\r\n/g, '\n');
 
-  // The real-board compatibility shim is unnecessary here: the simulator
-  // already provides tone()/noTone(), and does not run C preprocessor guards.
+  // Real-board compatibility shims are unnecessary here, and the simulator
+  // does not run C preprocessor guards.
+  code = code.replace(
+    /^[ \t]*\/\/ BEGIN VIDI X LEGACY PIN COMPATIBILITY[^\n]*\n[\s\S]*?^[ \t]*\/\/ END VIDI X LEGACY PIN COMPATIBILITY[^\n]*(?:\n|$)/gm,
+    ''
+  );
   code = code.replace(
     /^[ \t]*\/\/ BEGIN VIDI X LEGACY TONE COMPATIBILITY[^\n]*\n[\s\S]*?^[ \t]*\/\/ END VIDI X LEGACY TONE COMPATIBILITY[^\n]*(?:\n|$)/gm,
     ''
@@ -929,7 +934,9 @@ export class ArduinoSketchVM {
     };
 
     const makeSerial = (uart: 0 | 2) => ({
-      begin: (_baud = 115200) => {},
+      begin: (_baud = 115200, _config?: unknown, rx?: number, tx?: number) => {
+        if (uart === 2 && tx !== undefined && rx !== undefined) cb.onConfigureUart?.(tx, rx);
+      },
       print: (val: unknown) => cb.onSerialPrint(uart, String(val ?? '')),
       println: (val?: unknown) => cb.onSerialPrint(uart, `${val !== undefined ? String(val) : ''}\n`),
       printf: (fmt: string, ...args: unknown[]) =>
@@ -1152,19 +1159,43 @@ export class ArduinoSketchVM {
       },
     };
 
+    // Register-level MPU-6050 on VIDIIC, shared by Arduino and Python examples.
     let activeI2cAddress = 0x68;
+    let i2cRegister = 0;
+    let i2cWrites: number[] = [];
+    let i2cReadBuffer: number[] = [];
     const Wire = {
       begin: (_sda = 33, _scl = 32) => {},
-      beginTransmission: (addr: number) => {
-        activeI2cAddress = Number(addr) || 0;
+      beginTransmission: (addr: number) => { activeI2cAddress = Number(addr); i2cWrites = []; },
+      write: (val: unknown) => { i2cWrites.push(Number(val) & 0xff); },
+      endTransmission: (_stop = true) => {
+        if (i2cWrites.length) i2cRegister = i2cWrites[0];
+        return activeI2cAddress === 0x68 || activeI2cAddress === 0x69 ? 0 : 2;
       },
-      write: (val: unknown) => {
-        cb.onSerialPrint(2, String(val ?? ''));
+      requestFrom: (addr: number, len: number) => {
+        i2cReadBuffer = [];
+        if (addr !== 0x68 && addr !== 0x69) return 0;
+        if (i2cRegister === 0x75) i2cReadBuffer = [0x68];
+        else if (i2cRegister === 0x3b) {
+          const sensor = cb.getSensors?.();
+          const roll = (sensor?.gyroRoll ?? 0) * Math.PI / 180;
+          const pitch = (sensor?.gyroPitch ?? 0) * Math.PI / 180;
+          const values = [16384 * Math.sin(roll), 16384 * Math.sin(pitch),
+            16384 * Math.cos(roll) * Math.cos(pitch),
+            ((sensor?.temperatureC ?? 24.5) - 36.53) * 340,
+            (sensor?.gyroRateX ?? 0) * 180 / Math.PI * 131,
+            (sensor?.gyroRateY ?? 0) * 180 / Math.PI * 131,
+            (sensor?.gyroRateZ ?? 0) * 180 / Math.PI * 131];
+          for (const value of values) {
+            const n = Math.max(-32768, Math.min(32767, Math.round(value))) & 0xffff;
+            i2cReadBuffer.push(n >> 8, n & 0xff);
+          }
+        }
+        i2cReadBuffer = i2cReadBuffer.slice(0, len);
+        return i2cReadBuffer.length;
       },
-      endTransmission: () => (activeI2cAddress === 0x68 ? 0 : 2),
-      requestFrom: (_addr: number, _len: number) => 0,
-      available: () => cb.onSerialAvailable(2),
-      read: () => cb.onSerialReadChar(2),
+      available: () => i2cReadBuffer.length,
+      read: () => i2cReadBuffer.shift() ?? -1,
     };
 
     const getGyroAccel = () => {
@@ -1225,6 +1256,7 @@ export class ArduinoSketchVM {
     const env: Record<string, unknown> = {
       HIGH: 1,
       LOW: 0,
+      SERIAL_8N1: 0,
       INPUT: 'INPUT',
       OUTPUT: 'OUTPUT',
       INPUT_PULLUP: 'INPUT_PULLUP',

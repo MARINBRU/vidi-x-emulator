@@ -232,6 +232,10 @@ export function App() {
         cluster.addBoard(sketchCode, sketchName, true);
       }
       cluster.loadSketchToAllBoards(sketchCode, sketchName);
+      if (sketchCode.includes('VIDI X WIRE BRIDGE: TX15 RX27')) {
+        const [first, second] = cluster.getBoards();
+        if (first && second) cluster.autoWireSafeBridge(first.state.id, second.state.id);
+      }
     } else {
       const target = selectedBoard || cluster.getBoards()[0];
       if (target) {
@@ -379,7 +383,8 @@ export function App() {
   };
 
   const handlePlayPreMadeProject = (premade: PreMadeProject) => {
-    loadProjectOntoBoards(premade.sketchCode, premade.name, premade.boardCount);
+    const language = premade.mode === 'cpp' ? 'C++' : premade.mode === 'python' ? 'Python' : 'Blocks';
+    loadProjectOntoBoards(premade.sketchCode, `${premade.name} (${language} example)`, premade.boardCount);
     setActiveTab('bench');
   };
 
@@ -392,7 +397,7 @@ export function App() {
       : undefined;
     const newProj: UserProject = {
       id: `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      name: `${premade.name} (My Copy)`,
+      name: `${premade.name} (${premade.mode === 'cpp' ? 'C++' : premade.mode === 'python' ? 'Python' : 'Blocks'} copy)`,
       description: premade.description,
       mode: premade.mode,
       sketchCode: premade.sketchCode,

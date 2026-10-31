@@ -157,6 +157,7 @@ struct VidiNetworkHardware {
   volatile int tail = 0;
   int cachedRole = -1; // 0 = Player 1, 1 = Player 2
   uint8_t myMac[6] = {0};
+  String macText;
   bool initialized = false;
 
   void ensureInit() {
@@ -165,8 +166,9 @@ struct VidiNetworkHardware {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     WiFi.macAddress(myMac);
+    macText = WiFi.macAddress();
     // Default role from lowest MAC byte parity; automatically flips if peer MAC > myMac
-    // Or hold Tipka B (GPIO 27 / 33) during boot to force Player 2
+    // Holding SELECT (GPIO 27) initially chooses Player 2 until a peer is seen.
     pinMode(27, INPUT_PULLUP);
     if (digitalRead(27) == LOW) {
       cachedRole = 1;
@@ -217,6 +219,9 @@ struct VidiNetworkHardware {
     return cachedRole;
   }
 
+  int getBoardNumber() { return boardIndex() + 1; }
+  const char *getMac() { ensureInit(); return macText.c_str(); }
+
   void broadcast(const char *msg) {
     ensureInit();
     static const uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -248,8 +253,84 @@ struct VidiNetworkHardware {
 static VidiNetworkHardware &VidiNetwork = VidiNetworkHardware::instance();
 `;
 
+// Legacy Adafruit/Blocks examples refer to emulator pin aliases. Give their
+// hardware exports real VIDI X pin numbers without altering the saved project.
+const REAL_VIDI_LEGACY_PINS = `
+// BEGIN VIDI X LEGACY PIN COMPATIBILITY
+#ifndef TFT_CS
+#define TFT_CS 5
+#endif
+#ifndef TFT_DC
+#define TFT_DC 21
+#endif
+#ifndef TFT_RST
+#define TFT_RST -1
+#endif
+#ifndef TOUCH_CS
+#define TOUCH_CS 4
+#endif
+#ifndef TOUCH_IRQ
+#define TOUCH_IRQ 12
+#endif
+#ifndef BTN_LR
+#define BTN_LR 34
+#endif
+#ifndef BTN_UD
+#define BTN_UD 35
+#endif
+#ifndef BTN_A
+#define BTN_A 32
+#endif
+#ifndef BTN_B
+#define BTN_B 33
+#endif
+#ifndef BTN_MENU
+#define BTN_MENU 13
+#endif
+#ifndef BTN_SELECT_START
+#define BTN_SELECT_START 27
+#endif
+#ifndef BTN_RESTART
+#define BTN_RESTART 0
+#endif
+#ifndef SPEAKER_PIN
+#define SPEAKER_PIN 25
+#endif
+#ifndef TEMP_PIN
+#define TEMP_PIN 26
+#endif
+#ifndef LIGHT_PIN
+#define LIGHT_PIN 39
+#endif
+#ifndef MIC_PIN
+#define MIC_PIN 14
+#endif
+#ifndef IR_PIN
+#define IR_PIN 15
+#endif
+#ifndef IR_TX_PIN
+#define IR_TX_PIN 12
+#endif
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 2
+#endif
+// END VIDI X LEGACY PIN COMPATIBILITY
+`;
+
 export function exportForRealVidiXHardware(sketchCode: string, sketchName = 'vidi_x_sketch'): string {
   let out = addVidiXHardwareSupport(sketchCode);
+  if (/\bAdafruit_ILI9341\b/.test(withoutCommentsOrStrings(out))) {
+    // Direct D-pad/SELECT/START aliases are simulator-only; real buttons are
+    // resistor ladders, and these sketches already test their analog values.
+    const visibleCode = withoutCommentsOrStrings(out);
+    const virtualButtons = /[ \t]*\|\|[ \t]*(?:\([ \t]*digitalRead[ \t]*\([ \t]*BTN_(?:LEFT|RIGHT|UP|DOWN|SELECT|START)[ \t]*\)[ \t]*==[ \t]*LOW[ \t]*\)|digitalRead[ \t]*\([ \t]*BTN_(?:LEFT|RIGHT|UP|DOWN|SELECT|START)[ \t]*\)[ \t]*==[ \t]*LOW)/g;
+    const matches = [...visibleCode.matchAll(virtualButtons)];
+    for (const match of matches.reverse()) {
+      const at = match.index ?? 0;
+      out = out.slice(0, at) + out.slice(at + match[0].length);
+    }
+    if (!out.includes('BEGIN VIDI X LEGACY PIN COMPATIBILITY')) out = REAL_VIDI_LEGACY_PINS + '\n' + out;
+  }
 
   const headerComment = [
     `// ============================================================================`,

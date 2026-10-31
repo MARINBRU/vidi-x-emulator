@@ -637,6 +637,7 @@ void setup() {
 }
 
 void loop() {
+  boardNum = VidiNetwork.getBoardNumber(); // roles settle when the first peer packet arrives
   int ud = analogRead(BTN_UD);
   bool moveUp = (ud > 3800) || (digitalRead(BTN_UP) == LOW) || (digitalRead(BTN_A) == LOW);
   bool moveDown = (ud > 1500 && ud < 2600) || (digitalRead(BTN_DOWN) == LOW) || (digitalRead(BTN_B) == LOW);

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exportForRealVidiXHardware } from '../hardwareExporter';
-import { DEFAULT_STARTER_CPP, PREMADE_PLAYABLE_PROJECTS } from '../projectStorage';
+import { DEFAULT_STARTER_CPP, PREMADE_PLAYABLE_PROJECTS, selectPremadeVariant } from '../projectStorage';
 
 // Optional real-toolchain regression: install the ESP32 core, LovyanGFX and
 // FastLED, then set ARDUINO_CLI. The regular suite needs no toolchain/network.
@@ -24,6 +24,10 @@ describe('real ESP32 compilation', () => {
           legacyStarter.replace('int score = 0;', 'int score = 42;'),
           'Edited Legacy'
         )],
+        ...(['premade-python-gyro', 'premade-python-quiz', 'premade-sd-logger'] as const).map((id, index) => {
+          const item = PREMADE_PLAYABLE_PROJECTS.find((project) => project.id === id)!;
+          return [`Example${index}`, exportForRealVidiXHardware(selectPremadeVariant(item, 'cpp').sketchCode, item.name)];
+        }),
         ['Multiplayer', exportForRealVidiXHardware(
           PREMADE_PLAYABLE_PROJECTS.find((project) => project.id === 'premade-3d-fps-2p')!.sketchCode,
           'Multiplayer'

@@ -26,10 +26,26 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 ### 2. Multi-Device Simulation (Wireless & Wired Interconnects)
 - **Simulate Multiple VIDI X Units Simultaneously**: Spawn 1, 2, 3, 4+ independent VIDI X boards in the same workspace, each with its own MAC address, IP address, framebuffer, audio synth, and Arduino VM.
 - **Wireless RF Bus (`ESP-NOW`, `WiFi UDP`, `BluetoothSerial`, `IR`)**: Boards can broadcast or unicast packets to each other with a live RF Packet Sniffer.
-- **60-Pin Expansion Header Jumper Wire Patch Bay**: Connect virtual jumper wires between any two boards' GPIO pins (including `UART2 TX2 (GPIO 17) -> RX2 (GPIO 16)` serial crossover and digital/PWM GPIO lines).
+- **60-Pin Expansion Header Jumper Wire Patch Bay**: Connect virtual jumper wires between any two boards' GPIO pins, including UART and digital/PWM lines. The old virtual UART2 defaults use GPIO 16/17, but those pins are reserved by WROVER PSRAM and must not be used for physical wiring.
 
 ### 3. Hardware Extension Bus Architecture (`src/emulator/extensions/registry.ts`)
 - Every simulated VIDI X board exposes a 60-pin `ExtensionBusContext` (`readDigital`, `writeDigital`, `readAnalog`, `writeAnalog`, `sendSerialRx`, `emitInterrupt`) managed by `ExtensionRegistry`, ready for plug-and-play hardware extensions.
+
+## Premade examples
+
+On the Home screen, choose **C++** or **Python** next to any example, then run it or copy it to Saved Projects. Block templates also retain their **Blocks** choice. Each language is a separate premade program: selecting a language does not convert or replace an existing saved project, and a saved copy keeps its chosen mode.
+
+The Python versions use CircuitPython 9's built-in `board.DISPLAY`, `displayio`, `bitmaptools`, and other standard modules. The 3D games are independent, lower-resolution implementations of the maze and FPS games, so their appearance and speed differ from the C++ versions. The two-board Pong and FPS examples exchange compatible ESP-NOW packets between C++ and Python. Make sure both real boards use the same Wi-Fi channel.
+
+Hardware details for the Python examples:
+
+- The five RGB LEDs use the optional `neopixel` library; without it the examples still run without the LED effects. Temperature input and the LEDs share GPIO 26 and cannot be used at the same time.
+- The painter, diagnostics and quiz support the D-pad without extra libraries. Their optional touch driver is `xpt2046_circuitpython`. On standard CircuitPython 9 firmware, the built-in display already owns the LCD's SPI pins; touch needs a compatible shared-bus/display initialization and calibration. If touch setup fails, these examples report it on serial and continue with the D-pad. The simulator's touch support is not proof that it works on a physical board.
+- In the Python oscilloscope, **B** switches between sound and infrared receive, because CircuitPython's VIDI X `IRRX` and speaker aliases both use GPIO 25. In infrared mode, **A** sends NEC command 0x45. Actual IR wiring and reception need verification on your board.
+- The gyro example needs an external MPU-6050 as described below. VIDIIC shares pins with A/B.
+- The **Wired GPIO & UART Bridge** replaces the old misleading “MicroSD Telemetry” label; the original example was a bridge and did not log to SD. Cross each board's GPIO 15 (TX) to the other's GPIO 27 (RX), connect ground to ground, and optionally cross GPIO 26 to GPIO 14 for the digital signal. Those pins share IR TX, SELECT, RGB LEDs and the microphone, respectively; do not use those onboard functions while they are wired. Use 3.3 V logic, not 5 V, and verify the expansion header pinout before connecting. GPIO 16/17 are used by the WROVER's PSRAM and are not safe UART choices on physical hardware.
+
+The simulator, CircuitPython cross-compiler and host-side API mocks test these examples; they are not a substitute for testing on physical VIDI X boards.
 
 ## Compiling a C++ project for VIDI X
 
@@ -55,7 +71,7 @@ Untouched old Python starters and gyro premades are updated automatically when t
 
 The gyro premade and its standalone [`examples/CircuitPythonGyro/code.py`](examples/CircuitPythonGyro/code.py) read an **external MPU-6050** directly over I2C: no Adafruit MPU library or other sensor package is needed. On a real VIDI X, connect an MPU-6050 breakout to VIDIIC, following the breakout's **3.3 V logic and power requirements**. VIDIIC SCL is GPIO 32, SDA is GPIO 33; connect grounds together and use appropriate I2C pull-ups to 3.3 V (many breakouts include them). Check the board's switch/jumper configuration and the breakout's voltage requirements before wiring. The default I2C address is `0x68`; if the sensor's AD0 pin is high, change `MPU6050_ADDRESS` to `0x69` in the file.
 
-VIDIIC shares GPIO 32 and 33 with buttons A and B. Do not press A/B while the bus is active; use MENU to score. The D-pad also moves the ball. Gyro rates are shown in degrees per second, while tilt is estimated from accelerometer readings and represents approximate static inclination, not sensor fusion. If the sensor is not found or a read fails, the screen and serial output report the problem and the example continues with the D-pad; tilt requires a working external sensor. Reset the board after connecting or repairing the sensor to try again. The default starter leaves `USE_MPU6050 = False` and uses A without opening I2C. To use the gyro version, export the **Gyroscope** premade (or download its standalone file) and save it to the board as `/code.py` using the Thonny steps above. Other premade examples may require extra libraries or older CircuitPython APIs and should be checked separately.
+VIDIIC shares GPIO 32 and 33 with buttons A and B. Do not press A/B while the bus is active; use MENU to score. The D-pad also moves the ball. Gyro rates are shown in degrees per second, while tilt is estimated from accelerometer readings and represents approximate static inclination, not sensor fusion. If the sensor is not found or a read fails, the screen and serial output report the problem and the example continues with the D-pad; tilt requires a working external sensor. Reset the board after connecting or repairing the sensor to try again. The default starter leaves `USE_MPU6050 = False` and uses A without opening I2C. To use the gyro version, export the **Gyroscope** premade (or download its standalone file) and save it to the board as `/code.py` using the Thonny steps above. Other examples may use optional libraries or shared pins as noted above.
 
 The starter and gyro example are tested in the simulator and against strict host mocks of the CircuitPython APIs. Those tests do not replace a test on a physical VIDI X.
 
@@ -74,7 +90,7 @@ npm install --legacy-peer-deps
 npm run dev
 ```
 
-To additionally compile the starter, its exports, and the multiplayer example with a locally installed Arduino CLI, install the ESP32 board package and the LovyanGFX and FastLED libraries, then run:
+To additionally compile the starter, its exports, the new C++ quiz/gyro/bridge and the multiplayer example with a locally installed Arduino CLI, install the ESP32 board package and the LovyanGFX and FastLED libraries, then run:
 
 ```bash
 ARDUINO_CLI=arduino-cli npm test

@@ -155,3 +155,25 @@ describe('VIDI X Arduino starter and hardware export', () => {
     cluster.stopBoard(board.state.id);
   });
 });
+
+describe('legacy premade hardware compatibility', () => {
+  it('supplies physical pin aliases and removes only simulator-only direct button checks', async () => {
+    const { PREMADE_PLAYABLE_PROJECTS, selectPremadeVariant } = await import('../projectStorage');
+    const block = PREMADE_PLAYABLE_PROJECTS.find((p) => p.id === 'premade-block-0')!;
+    const source = selectPremadeVariant(block, 'cpp').sketchCode;
+    const exported = exportForRealVidiXHardware(source, 'Blocks');
+    expect(exported).toContain('#define TFT_CS 5');
+    expect(exported).toContain('#define BTN_B 33');
+    expect(exported).not.toMatch(/digitalRead\(BTN_(?:LEFT|RIGHT|UP|DOWN|SELECT|START)\)/);
+    expect(exported).toMatch(/if \(\(analogRead\(BTN_LR\) > 3800\)\)/);
+    expect(exported).toContain('int getBoardNumber() { return boardIndex() + 1; }');
+    expect(exported).toContain('const char *getMac()');
+    expect(source).not.toContain('BEGIN VIDI X LEGACY PIN COMPATIBILITY');
+    const withQuotedText = source + '\n// || digitalRead(BTN_UP) == LOW\nvoid note() { Serial.println(" || digitalRead(BTN_UP) == LOW"); }\n';
+    const quotedExport = exportForRealVidiXHardware(withQuotedText);
+    expect(quotedExport).toContain('Serial.println(" || digitalRead(BTN_UP) == LOW")');
+    expect(quotedExport).toContain('// || digitalRead(BTN_UP) == LOW');
+    const twice = exportForRealVidiXHardware(exported, 'Blocks');
+    expect(twice.match(/BEGIN VIDI X LEGACY PIN COMPATIBILITY/g)).toHaveLength(1);
+  });
+});

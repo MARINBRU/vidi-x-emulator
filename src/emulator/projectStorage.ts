@@ -1,6 +1,7 @@
 import { BLOCK_TEMPLATES, BlockProgram, compileBlocksToArduino } from './blocklyEngine';
 import { EXAMPLE_SKETCHES } from './exampleSketches';
 import { addVidiXHardwareSupport } from './hardwareExporter';
+import { PREMADE_CPP_VARIANTS, PREMADE_PYTHON_VARIANTS, PYTHON_QUIZ } from './premadeVariants';
 import starterPython from '../../examples/CircuitPythonStarter/code.py?raw';
 import legacyStarterPythonV2 from './legacy/python-starter-v2.py?raw';
 
@@ -26,6 +27,8 @@ export interface PreMadeProject {
   boardCount: 1 | 2;
   sketchCode: string;
   blockProgram?: BlockProgram;
+  // Separate premade source files, not conversion of a saved project.
+  variants?: Partial<Record<'cpp' | 'python', string>>;
 }
 
 export interface CookieStorageStats {
@@ -230,205 +233,6 @@ export const DEFAULT_STARTER_PYTHON = starterPython;
 const PREMADE_PYTHON_GYRO = starterPython.replace('USE_MPU6050 = False', 'USE_MPU6050 = True');
 const LEGACY_PYTHON_GYRO_V2 = legacyStarterPythonV2.replace('USE_MPU6050 = False', 'USE_MPU6050 = True');
 
-const PREMADE_VIDILAB_QUIZ_PY = `# Official VidiLAB CircuitPython Quiz (8080.py from VidiLAB-com/VIDI-X-Primjeri)
-import board
-import displayio
-import analogio
-import time
-import terminalio
-import digitalio
-import simpleio
-import xpt2046_circuitpython
-from adafruit_ili9341 import ILI9341
-from adafruit_display_text import label
-from adafruit_display_shapes.rect import Rect
-from adafruit_display_shapes.roundrect import RoundRect
-
-score = 0
-level = 1
-questionText = ""
-a = ""
-b = ""
-c = ""
-d = ""
-
-displayio.release_displays()
-PIEZO_PIN = board.GPIO25
-
-led = digitalio.DigitalInOut(board.STATUS)
-led.direction = digitalio.Direction.OUTPUT
-
-touch = xpt2046_circuitpython.Touch(board.SPI(), cs=digitalio.DigitalInOut(board.TOUCH_CS))
-spi = board.SPI()
-display_bus = displayio.FourWire(spi, command=board.LCD_DC, chip_select=board.LCD_CS, reset=None)
-display = ILI9341(display_bus, width=320, height=240, rotation=180)
-
-splash = displayio.Group()
-display.root_group = splash
-color_bitmap = displayio.Bitmap(320, 240, 1)
-color_palette = displayio.Palette(1)
-color_palette[0] = 0x000000
-bg_sprite = displayio.TileGrid(color_bitmap, pixel_shader=color_palette, x=0, y=0)
-splash.append(bg_sprite)
-
-rect = Rect(0, 0, 320, 20, outline=0x0000FF)
-splash.append(rect)
-
-text_groupL = displayio.Group(scale=1, x=8, y=10)
-text_areaL = label.Label(terminalio.FONT, text="Razina: 1", color=0xFFFFFF)
-text_groupL.append(text_areaL)
-splash.append(text_groupL)
-
-text_groupS = displayio.Group(scale=1, x=210, y=10)
-text_areaS = label.Label(terminalio.FONT, text="Rezultat: 0", color=0xFFFFFF)
-text_groupS.append(text_areaS)
-splash.append(text_groupS)
-
-text_groupQ = displayio.Group(scale=1, x=10, y=34)
-text_areaQ = label.Label(terminalio.FONT, text="", color=0xFFEE00)
-text_groupQ.append(text_areaQ)
-splash.append(text_groupQ)
-
-roundrectA = RoundRect(80, 52, 160, 44, 5, outline=0x0088FF)
-splash.append(roundrectA)
-text_groupA = displayio.Group(scale=1, x=92, y=74)
-text_areaA = label.Label(terminalio.FONT, text="A:", color=0xFFFFFF)
-text_groupA.append(text_areaA)
-splash.append(text_groupA)
-
-roundrectB = RoundRect(5, 114, 150, 44, 5, outline=0x0088FF)
-splash.append(roundrectB)
-text_groupB = displayio.Group(scale=1, x=15, y=136)
-text_areaB = label.Label(terminalio.FONT, text="B:", color=0xFFFFFF)
-text_groupB.append(text_areaB)
-splash.append(text_groupB)
-
-roundrectC = RoundRect(165, 114, 150, 44, 5, outline=0x0088FF)
-splash.append(roundrectC)
-text_groupC = displayio.Group(scale=1, x=175, y=136)
-text_areaC = label.Label(terminalio.FONT, text="C:", color=0xFFFFFF)
-text_groupC.append(text_areaC)
-splash.append(text_groupC)
-
-roundrectD = RoundRect(80, 176, 160, 44, 5, outline=0x0088FF)
-splash.append(roundrectD)
-text_groupD = displayio.Group(scale=1, x=92, y=198)
-text_areaD = label.Label(terminalio.FONT, text="D:", color=0xFFFFFF)
-text_groupD.append(text_areaD)
-splash.append(text_groupD)
-
-def correct():
-    global score
-    global level
-    score = score + 1
-    led.value = True
-    simpleio.tone(PIEZO_PIN, 523, duration=0.15)
-    simpleio.tone(PIEZO_PIN, 784, duration=0.2)
-    led.value = False
-    level = level + 1
-
-def wrong():
-    global level
-    simpleio.tone(PIEZO_PIN, 300, duration=0.15)
-    simpleio.tone(PIEZO_PIN, 200, duration=0.25)
-    level = level + 1
-
-def checkButtonInput(correctAnswer):
-    with analogio.AnalogIn(board.BTN_L_R) as analog_pin:
-        analog_value = analog_pin.value
-        if analog_value > 30000 and analog_value < 60000:
-            if correctAnswer == "C":
-                roundrectC.outline = 0x00FF00
-                correct()
-            else:
-                roundrectC.outline = 0xFF0000
-                wrong()
-        elif analog_value > 60000:
-            if correctAnswer == "B":
-                roundrectB.outline = 0x00FF00
-                correct()
-            else:
-                roundrectB.outline = 0xFF0000
-                wrong()
-    with analogio.AnalogIn(board.BTN_UP_DOWN) as analog_pin:
-        analog_value = analog_pin.value
-        if analog_value > 30000 and analog_value < 60000:
-            if correctAnswer == "D":
-                roundrectD.outline = 0x00FF00
-                correct()
-            else:
-                roundrectD.outline = 0xFF0000
-                wrong()
-        elif analog_value > 60000:
-            if correctAnswer == "A":
-                roundrectA.outline = 0x00FF00
-                correct()
-            else:
-                roundrectA.outline = 0xFF0000
-                wrong()
-
-def checkTouchInput(correctAnswer):
-    x, y = touch.get_coordinates()
-    if x is not None and y is not None:
-        if x >= 80 and x <= 240 and y >= 52 and y <= 96:
-            if correctAnswer == "A":
-                roundrectA.outline = 0x00FF00
-                correct()
-            else:
-                roundrectA.outline = 0xFF0000
-                wrong()
-        elif x >= 5 and x <= 155 and y >= 114 and y <= 158:
-            if correctAnswer == "B":
-                roundrectB.outline = 0x00FF00
-                correct()
-            else:
-                roundrectB.outline = 0xFF0000
-                wrong()
-        elif x >= 165 and x <= 315 and y >= 114 and y <= 158:
-            if correctAnswer == "C":
-                roundrectC.outline = 0x00FF00
-                correct()
-            else:
-                roundrectC.outline = 0xFF0000
-                wrong()
-        elif x >= 80 and x <= 240 and y >= 176 and y <= 220:
-            if correctAnswer == "D":
-                roundrectD.outline = 0x00FF00
-                correct()
-            else:
-                roundrectD.outline = 0xFF0000
-                wrong()
-
-def menu(qText, optA, optB, optC, optD, correctAnswer):
-    roundrectA.outline = 0x0088FF
-    roundrectB.outline = 0x0088FF
-    roundrectC.outline = 0x0088FF
-    roundrectD.outline = 0x0088FF
-    text_areaL.text = "Razina: " + str(level)
-    text_areaS.text = "Rezultat: " + str(score)
-    text_areaQ.text = str(level) + ". " + str(qText)
-    text_areaA.text = "A(UP): " + str(optA)
-    text_areaB.text = "B(LEFT): " + str(optB)
-    text_areaC.text = "C(RIGHT): " + str(optC)
-    text_areaD.text = "D(DOWN): " + str(optD)
-    checkTouchInput(correctAnswer)
-    checkButtonInput(correctAnswer)
-
-while True:
-    if level == 1:
-        menu("Koliko je 2 + 2?", "2", "3", "4", "5", "C")
-    elif level == 2:
-        menu("U formuli F=ma sto oznacava m?", "Masu", "Akceleraciju", "Silu", "Brzinu", "A")
-    elif level == 3:
-        menu("Voda se sastoji od kisika i?", "Zlata", "Vodika", "Ugljika", "Bakra", "B")
-    elif level == 4:
-        menu("Sto je mozak racunala?", "GPU", "Memorija", "Disk", "CPU", "D")
-    else:
-        level = 1
-        score = 0
-    time.sleep(0.05)
-`;
-
 export function createStarterBlockProgram(name = 'My Visual Block Project'): BlockProgram {
   return {
     name,
@@ -488,13 +292,13 @@ export function createStarterBlockProgram(name = 'My Visual Block Project'): Blo
 // ============================================================================
 // Pre-Made Playable Projects Catalog (Displayed on Home Screen)
 // ============================================================================
-export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
+const PREMADE_CATALOG: PreMadeProject[] = [
   {
     id: 'premade-3d-maze',
     name: '3D Raycast Maze + Minimap & Coins',
     subtitle: 'First-Person 3D Dungeon + Spinning Gold Coins + Top-Right Radar',
     description:
-      'Explore a 10x10 3D raycast maze at 60 FPS with a live minimap overlay, spinning gold coins, piezo sound effects, and WS2812B RGB LED progress.',
+      'Explore a 3D raycast maze with coins, a minimap, and sound effects. The C++ and Python games have different graphics and performance.',
     category: '3d-preview',
     badge: '3D ENGINE + MINIMAP',
     mode: 'cpp',
@@ -508,7 +312,7 @@ export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
     name: '3D Cyber-DOOM Singleplayer FPS',
     subtitle: '1-Player 3D First-Person Shooter vs AI Cyber-Drones',
     description:
-      'Battle 4 autonomous AI patrol drones in a 3D facility with hitscan plasma rifle, muzzle flash, radar minimap, health/ammo HUD, and RGB status.',
+      'Battle patrolling drones in a 3D facility with a plasma rifle, minimap, and health/ammo display. The C++ and Python games have different graphics and performance.',
     category: '3d-preview',
     badge: '1P 3D SHOOTER',
     mode: 'cpp',
@@ -550,7 +354,7 @@ export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
     name: 'Podmornice / Cyber-Submarine Arcade',
     subtitle: 'LovyanGFX Sprite Double-Buffered Arcade + FastLED + PWM Audio',
     description:
-      'Action arcade game using official VidiLAB LovyanGFX double-buffered sprites, analog resistor-ladder D-Pad, and 5x WS2812B RGB LEDs.',
+      'Action arcade game inspired by VidiLAB examples. Steer with the D-pad, avoid obstacles, collect power-ups and fire with A.',
     category: 'hardware-demo',
     badge: 'LOVYANGFX ARCADE',
     mode: 'cpp',
@@ -587,21 +391,19 @@ export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
   },
   {
     id: 'premade-sd-logger',
-    name: 'MicroSD Telemetry Blackbox & UART2 Bridge',
-    subtitle: 'SPI MicroSD File Logger + 60-Pin Expansion Bus Serial2 Comms',
+    name: 'Wired GPIO & UART Bridge',
+    subtitle: 'Two-board UART and digital expansion-header demonstration',
     description:
-      'Logs onboard temperature, ambient light, and battery telemetry to MicroSD (/telemetry.csv) and transmits frames on Expansion UART2.',
+      'Cross GPIO15 TX to GPIO27 RX and share ground; optionally connect GPIO26 to GPIO14. These pins share onboard functions. GPIO16/17 are reserved for WROVER PSRAM.',
     category: 'hardware-demo',
-    badge: 'SD & EXPANSION',
+    badge: 'WIRED EXPANSION',
     mode: 'cpp',
-    boardCount: 1,
-    sketchCode:
-      EXAMPLE_SKETCHES.find((s) => s.id === 'wired-gpio-uart-bridge')?.code ||
-      EXAMPLE_SKETCHES[3].code,
+    boardCount: 2,
+    sketchCode: PREMADE_CPP_VARIANTS['premade-sd-logger'],
   },
   {
     id: 'premade-python-gyro',
-    name: 'Gyroscope Horizon & Tilt Ball (CircuitPython + MPU-6050)',
+    name: 'Gyroscope Horizon & Tilt Ball (MPU-6050)',
     subtitle: 'External MPU-6050 via VIDIIC (SCL=32 / SDA=33)',
     description:
       'Tilt using SENSORS / GYRO or the D-pad. A real board requires an external MPU-6050 but no sensor library; use MENU, not A/B, while VIDIIC is active.',
@@ -613,29 +415,48 @@ export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = [
   },
   {
     id: 'premade-python-quiz',
-    name: 'VidiLAB CircuitPython Touch & D-Pad Quiz (8080.py)',
-    subtitle: 'Official VidiLAB-com/VIDI-X-Primjeri CircuitPython DisplayIO & Touch Quiz',
+    name: 'VIDI X Quiz',
+    subtitle: 'English questions and D-pad controls',
     description:
-      'Official VidiLAB CircuitPython curriculum example using displayio groups, RoundRect, label.Label, xpt2046_circuitpython touch coordinates, and analogio resistor-ladder buttons.',
+      'A six-question quiz inspired by the VIDI X teaching guide. Use the D-pad to answer; optional touch support is available in the Python example.',
     category: 'hardware-demo',
     badge: 'CIRCUITPYTHON',
     mode: 'python',
     boardCount: 1,
-    sketchCode: PREMADE_VIDILAB_QUIZ_PY,
+    sketchCode: PYTHON_QUIZ,
   },
   ...BLOCK_TEMPLATES.map((tpl, i) => ({
     id: `premade-block-${i}`,
-    name: `${tpl.name} (Visual Blocks)`,
+    name: tpl.name,
     subtitle: 'Pre-Made Visual Block Project — Play or Clone to Customize',
     description: tpl.description,
     category: 'block-preview' as const,
     badge: 'VISUAL BLOCKS',
     mode: 'blocks' as const,
-    boardCount: (tpl.name.toLowerCase().includes('multiplayer') ? 2 : 1) as 1 | 2,
+    boardCount: (tpl.id === 'tpl-wireless-beacon' || tpl.id === 'tpl-3d-fps-multiplayer' ? 2 : 1) as 1 | 2,
     sketchCode: compileBlocksToArduino(tpl.program),
     blockProgram: JSON.parse(JSON.stringify(tpl.program)) as BlockProgram,
   })),
 ];
+
+/** Every premade has two independent sources; Blocks remain available where original. */
+export const PREMADE_PLAYABLE_PROJECTS: PreMadeProject[] = PREMADE_CATALOG.map((project) => {
+  const cpp = PREMADE_CPP_VARIANTS[project.id] ?? (project.mode !== 'python' ? project.sketchCode : undefined);
+  const python = PREMADE_PYTHON_VARIANTS[project.id] ?? (project.mode === 'python' ? project.sketchCode : undefined);
+  if (!cpp || !python) throw new Error(`Missing C++ or Python example for ${project.id}`);
+  return { ...project, variants: { cpp, python } };
+});
+
+export function selectPremadeVariant(project: PreMadeProject, mode: UserProject['mode']): PreMadeProject {
+  if (mode === 'blocks') {
+    if (!project.blockProgram) throw new Error('This example has no Blocks version');
+    return { ...project, mode, sketchCode: compileBlocksToArduino(project.blockProgram) };
+  }
+  const sketchCode = project.variants?.[mode];
+  if (!sketchCode) throw new Error(`This example has no ${mode} version`);
+  return { ...project, mode, sketchCode, blockProgram: undefined };
+}
+
 
 // ============================================================================
 // Cookie Read / Write Helpers (Chunked Browser Cookies)

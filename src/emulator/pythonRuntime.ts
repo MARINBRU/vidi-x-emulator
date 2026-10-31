@@ -18,6 +18,14 @@ if (!strProto.format) {
   };
 }
 
+// Lists in translated Python are JavaScript arrays.
+if (!('append' in Array.prototype)) {
+  Object.defineProperty(Array.prototype, 'append', {
+    value: function (this: unknown[], value: unknown) { this.push(value); },
+    configurable: true,
+  });
+}
+
 /**
  * Detect whether a source string is a VIDI X Python / CircuitPython (.py) script
  * rather than an Arduino C++ (.ino) sketch.
@@ -25,7 +33,7 @@ if (!strProto.format) {
 export function isPythonCode(code: string): boolean {
   const trimmed = code.trim();
   if (
-    /^\s*(import\s+(board|time|digitalio|analogio|pwmio|simpleio|displayio|neopixel|adafruit_mpu6050)|from\s+(adafruit_|board|digitalio|displayio))/m.test(
+    /^\s*(import\s+(board|time|digitalio|analogio|pwmio|simpleio|displayio|bitmaptools|espnow|wifi|neopixel|adafruit_mpu6050)|from\s+(adafruit_|board|digitalio|displayio))/m.test(
       trimmed
     )
   ) {
@@ -587,6 +595,7 @@ export function createPythonRuntimeEnv(
         },
         set frequency(f: number) {
           freq = f;
+          if (gpio === VIDI_X_PINS.SPEAKER_PIN && duty > 0) callbacks.onTone(gpio, freq);
         },
         get duty_cycle() {
           return duty;
@@ -595,11 +604,15 @@ export function createPythonRuntimeEnv(
           duty = Math.max(0, Math.min(65535, Number(d) || 0));
           const scaled12 = Math.round((duty / 65535) * 4095);
           callbacks.onAnalogWrite(gpio, scaled12);
+          if (gpio === VIDI_X_PINS.SPEAKER_PIN) {
+            if (duty > 0 && freq > 0) callbacks.onTone(gpio, freq);
+            else callbacks.onNoTone(gpio);
+          }
           if (gpio === VIDI_X_PINS.STATUS_LED || gpio === VIDI_X_PINS.LED_BUILTIN) {
             callbacks.onDigitalWrite(gpio, duty > 8192 ? 1 : 0);
           }
         },
-        deinit: () => {},
+        deinit: () => { if (gpio === VIDI_X_PINS.SPEAKER_PIN) callbacks.onNoTone(gpio); },
       };
     },
   };
@@ -821,6 +834,38 @@ export function createPythonRuntimeEnv(
       return new Proxy(grid, {
         set(target, prop, value) { Reflect.set(target, prop, value); sceneDirty = true; return true; },
       });
+    },
+  };
+
+  // CircuitPython bitmaptools primitives operate directly on displayio.Bitmaps.
+  // Rectangles use exclusive end coordinates, as on the physical firmware.
+  const bitmaptools = {
+    fill_region: (bitmap: DisplayIoBitmap, x1: number, y1: number, x2: number, y2: number, value: number) => {
+      if (!bitmap.pixels) throw new TypeError('Expected a displayio.Bitmap');
+      const left = Math.max(0, Math.min(bitmap.width, Math.trunc(x1)));
+      const right = Math.max(left, Math.min(bitmap.width, Math.trunc(x2)));
+      const top = Math.max(0, Math.min(bitmap.height, Math.trunc(y1)));
+      const bottom = Math.max(top, Math.min(bitmap.height, Math.trunc(y2)));
+      for (let y = top; y < bottom; y++) bitmap.pixels.fill(value, y * bitmap.width + left, y * bitmap.width + right);
+      if (value && right > left && bottom > top) bitmap.nonzeroCount = Math.max(1, bitmap.nonzeroCount ?? 0);
+      sceneDirty = true;
+    },
+    draw_line: (bitmap: DisplayIoBitmap, x1: number, y1: number, x2: number, y2: number, value: number) => {
+      if (!bitmap.pixels) throw new TypeError('Expected a displayio.Bitmap');
+      let x = Math.trunc(x1), y = Math.trunc(y1);
+      const endX = Math.trunc(x2), endY = Math.trunc(y2);
+      const dx = Math.abs(endX - x), dy = Math.abs(endY - y);
+      const sx = x < endX ? 1 : -1, sy = y < endY ? 1 : -1;
+      let error = dx - dy;
+      while (true) {
+        if (x >= 0 && x < bitmap.width && y >= 0 && y < bitmap.height) bitmap.pixels[y * bitmap.width + x] = value;
+        if (x === endX && y === endY) break;
+        const twice = error * 2;
+        if (twice > -dy) { error -= dy; x += sx; }
+        if (twice < dx) { error += dx; y += sy; }
+      }
+      if (value) bitmap.nonzeroCount = Math.max(1, bitmap.nonzeroCount ?? 0);
+      sceneDirty = true;
     },
   };
 
@@ -1066,6 +1111,103 @@ export function createPythonRuntimeEnv(
   const busio = {
     I2C: (..._args: unknown[]) => ({ __bus: 'I2C', scl: 32, sda: 33 }),
     SPI: (..._args: unknown[]) => ({ __bus: 'SPI', sck: 18, mosi: 23, miso: 19 }),
+    UART: (...rawArgs: unknown[]) => {
+      const { pos, kw } = extractKw(rawArgs);
+      callbacks.onConfigureUart?.(Number(pos[0] ?? kw.tx), Number(pos[1] ?? kw.rx));
+      return {
+        get in_waiting() { return callbacks.onSerialAvailable(2); },
+        write: (data: Uint8Array) => {
+          callbacks.onSerialPrint(2, new TextDecoder().decode(data));
+          return data.length;
+        },
+        read: () => callbacks.onSerialAvailable(2) > 0
+          ? pythonBytes(callbacks.onSerialReadString(2)) : null,
+        deinit: () => {},
+      };
+    },
+  };
+
+  // A small model of the CircuitPython 9 ESP-NOW and WiFi APIs. Packets use
+  // the same virtual radio as the Arduino VidiNetwork examples.
+  const pythonBytes = (values: ArrayLike<number> | string, _encoding = 'utf-8') => {
+    const data = typeof values === 'string' ? new TextEncoder().encode(values) : Uint8Array.from(values);
+    return Object.assign(data, {
+      hex: () => Array.from(data, (byte) => byte.toString(16).padStart(2, '0')).join(''),
+      decode: (_encoding = 'utf-8') => new TextDecoder().decode(data),
+    });
+  };
+  const macBytes = (mac: string) => pythonBytes(mac.split(':').map((part) => {
+    const value = Number.parseInt(part, 16);
+    return Number.isFinite(value) ? value : 0;
+  }));
+  // NEC-compatible PulseIn/PulseOut, bridged to the emulator's IR transport.
+  // Pulse timings are in microseconds, just like CircuitPython's pulseio API.
+  const pulseio = {
+    PulseOut: (...rawArgs: unknown[]) => {
+      const { pos, kw } = extractKw(rawArgs);
+      const pin = Number(pos[0] ?? kw.pin);
+      callbacks.onPinMode(pin, 'OUTPUT');
+      return {
+        send: (pulses: ArrayLike<number>) => {
+          let command = 0;
+          if (pulses.length >= 66) {
+            for (let bit = 16; bit < 24; bit++) {
+              if (Number(pulses[3 + bit * 2]) > 1100) command |= 1 << (bit - 16);
+            }
+          }
+          callbacks.onSendWireless('IR', 'FF:FF:FF:FF:FF:FF', `IR:0x${command.toString(16).toUpperCase()}`, command);
+        },
+        deinit: () => {},
+      };
+    },
+    PulseIn: (...rawArgs: unknown[]) => {
+      const { pos, kw } = extractKw(rawArgs);
+      callbacks.onPinMode(Number(pos[0] ?? kw.pin), 'INPUT');
+      let pulses: number[] = [];
+      const populate = () => {
+        if (pulses.length) return;
+        const ir = callbacks.onGetIrCode();
+        if (!ir.available) return;
+        callbacks.onConsumeIrCode();
+        const command = ir.code & 0xff;
+        const bytes = [1, 254, command, command ^ 255];
+        pulses = [9000, 4500];
+        for (const byte of bytes) for (let bit = 0; bit < 8; bit++) pulses.push(560, byte & (1 << bit) ? 1690 : 560);
+        pulses.push(560);
+      };
+      return {
+        get length() { populate(); return pulses.length; },
+        popleft: () => pulses.shift() ?? 0,
+        pause: () => {}, resume: () => {}, clear: () => { pulses = []; },
+        deinit: () => { pulses = []; },
+      };
+    },
+  };
+  const wifi = { radio: { mac_address: macBytes(callbacks.macAddress ?? '00:00:00:00:00:00') } };
+  const espnow = {
+    Peer: (...rawArgs: unknown[]) => {
+      const { pos, kw } = extractKw(rawArgs);
+      return { mac: pos[0] ?? kw.mac };
+    },
+    ESPNow: () => {
+      callbacks.onEspNowInit();
+      return {
+        peers: { append: (_peer: unknown) => {} },
+        send: (message: string | Uint8Array) => {
+          const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+          callbacks.onSendWireless('ESP-NOW', 'FF:FF:FF:FF:FF:FF', text);
+        },
+        read: () => {
+          const packet = callbacks.onPopWirelessPacket('ESP-NOW');
+          return packet ? {
+            mac: macBytes(packet.fromMac),
+            msg: pythonBytes(new TextEncoder().encode(packet.payload)),
+            rssi: -50, time: callbacks.getMillis(),
+          } : null;
+        },
+        deinit: () => {},
+      };
+    },
   };
 
   const time = {
@@ -1152,6 +1294,14 @@ export function createPythonRuntimeEnv(
       simpleio,
       neopixel,
       displayio,
+      bitmaptools,
+      pulseio,
+      array: (typecode: string, values: ArrayLike<number>) => {
+        if (typecode !== 'H') throw new TypeError('Only unsigned halfword pulse arrays are supported');
+        return Uint16Array.from(values);
+      },
+      espnow,
+      wifi,
       terminalio,
       ILI9341,
       ili9341,
@@ -1167,7 +1317,7 @@ export function createPythonRuntimeEnv(
       math,
       random,
       print,
-      bytes: (values: ArrayLike<number>) => Uint8Array.from(values),
+      bytes: pythonBytes,
       bytearray: (value: number | ArrayLike<number>) =>
         typeof value === 'number' ? new Uint8Array(value) : Uint8Array.from(value),
       __pyExceptionMatches: (error: unknown, names: string[]) => {
@@ -1425,6 +1575,7 @@ export function transpilePythonSketch(pyCode: string): {
   // Second pass: convert indentation blocks and statements to JS
   const indentStack: number[] = [0];
   const declaredVarsStack: Array<Set<string>> = [new Set<string>()];
+  const functionScopes: Array<{ indent: number; globals: Set<string> }> = [];
   const jsOut: string[] = [];
 
   for (let i = 0; i < logicalLines.length; i++) {
@@ -1433,6 +1584,9 @@ export function transpilePythonSketch(pyCode: string): {
     if (!trimmed) continue;
 
     const leadingSpaces = (line.match(/^[ \t]*/)?.[0] || '').replace(/\t/g, '    ').length;
+    while (functionScopes.length && leadingSpaces <= functionScopes[functionScopes.length - 1].indent) {
+      functionScopes.pop();
+    }
 
     // Close blocks when indentation decreases
     while (indentStack.length > 1 && leadingSpaces < indentStack[indentStack.length - 1]) {
@@ -1447,8 +1601,11 @@ export function transpilePythonSketch(pyCode: string): {
       continue;
     }
 
-    // Skip `global x` declarations
-    if (/^global\s+/.test(trimmed)) {
+    // A Python function assigns locally unless the name is declared global.
+    const globalMatch = trimmed.match(/^global\s+(.+)$/);
+    if (globalMatch) {
+      const scope = functionScopes[functionScopes.length - 1];
+      if (scope) for (const name of globalMatch[1].split(',')) scope.globals.add(name.trim());
       continue;
     }
 
@@ -1498,6 +1655,7 @@ export function transpilePythonSketch(pyCode: string): {
         .filter(Boolean);
       const fnScope = new Set<string>(params.map((p) => p.split('=')[0].trim()));
       jsOut.push(`async function ${fnName}(${params.join(', ')}) {`);
+      functionScopes.push({ indent: leadingSpaces, globals: new Set() });
       indentStack.push(leadingSpaces + 1);
       declaredVarsStack.push(fnScope);
       continue;
@@ -1594,8 +1752,9 @@ export function transpilePythonSketch(pyCode: string): {
     if (tupleAssign) {
       const vars = tupleAssign[1].split(',').map((v) => v.trim());
       const rhs = transpilePythonExpr(tupleAssign[2], userDefinedFuncs);
+      const scope = functionScopes[functionScopes.length - 1];
       for (const v of vars) {
-        jsOut.push(`var ${v} = null;`);
+        if (!scope?.globals.has(v)) jsOut.push(`var ${v};`);
       }
       jsOut.push(`[${vars.join(', ')}] = ${rhs};`);
       continue;
@@ -1607,13 +1766,11 @@ export function transpilePythonSketch(pyCode: string): {
       const varName = simpleAssign[1];
       const rawRhs = simpleAssign[2].trim();
       const rhs = rawRhs ? transpilePythonExpr(rawRhs, userDefinedFuncs) : '0';
-      const isGlobalDeclared = declaredVarsStack[0].has(varName);
-      if (!isGlobalDeclared && indentStack.length === 1) {
-        declaredVarsStack[0].add(varName);
-        jsOut.push(`var ${varName} = ${rhs};`);
-      } else if (declaredVarsStack[0].has(varName)) {
+      const scope = functionScopes[functionScopes.length - 1];
+      if (scope?.globals.has(varName)) {
         jsOut.push(`${varName} = ${rhs};`);
       } else {
+        if (!scope) declaredVarsStack[0].add(varName);
         jsOut.push(`var ${varName} = ${rhs};`);
       }
       continue;
