@@ -148,6 +148,7 @@ export function createPythonRuntimeEnv(
   // Root displayio group if the script uses CircuitPython's displayio scene graph
   let activeRootGroup: DisplayIoNode | null = null;
   let sceneDirty = false;
+  let displayAutoRefresh = true;
 
   const renderNode = (node: DisplayIoNode, offsetX: number, offsetY: number, parentScale: number) => {
     if (!node) return;
@@ -279,6 +280,10 @@ export function createPythonRuntimeEnv(
     }
   };
 
+  const flushIfAuto = () => {
+    if (displayAutoRefresh) flushDisplayIo();
+  };
+
   // Minimal register-level VIDIIC MPU-6050 simulation. Real CircuitPython
   // requires an I2C lock even for combined register reads.
   const makeI2cError = (name: string, message: string): Error => {
@@ -349,18 +354,25 @@ export function createPythonRuntimeEnv(
     width: 320,
     height: 240,
     rotation: 0,
+    get auto_refresh() { return displayAutoRefresh; },
+    set auto_refresh(value: boolean) {
+      displayAutoRefresh = Boolean(value);
+      flushIfAuto();
+    },
+    // Manual mode presents the accumulated scene only when refresh is called.
+    refresh: () => { flushDisplayIo(); return true; },
     get root_group() {
       return activeRootGroup;
     },
     set root_group(grp: DisplayIoNode | null) {
       activeRootGroup = grp;
       sceneDirty = true;
-      flushDisplayIo();
+      flushIfAuto();
     },
     show: (grp: DisplayIoNode | null) => {
       activeRootGroup = grp;
       sceneDirty = true;
-      flushDisplayIo();
+      flushIfAuto();
     },
     fill: (color: unknown) => {
       activeRootGroup = null;
@@ -735,7 +747,7 @@ export function createPythonRuntimeEnv(
       append: (child: DisplayIoNode) => {
         children.push(child);
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
       pop: (idx?: number) => {
         if (idx === undefined) {
@@ -744,7 +756,7 @@ export function createPythonRuntimeEnv(
           children.splice(idx, 1);
         }
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
       get length() {
         return children.length;
@@ -761,7 +773,7 @@ export function createPythonRuntimeEnv(
       set(target, prop, val) {
         (target as unknown as Record<string | symbol, unknown>)[prop] = val;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
         return true;
       },
     });
@@ -850,6 +862,33 @@ export function createPythonRuntimeEnv(
       if (value && right > left && bottom > top) bitmap.nonzeroCount = Math.max(1, bitmap.nonzeroCount ?? 0);
       sceneDirty = true;
     },
+    blit: (...rawArgs: unknown[]) => {
+      const { pos, kw } = extractKw(rawArgs);
+      const dest = (pos[0] ?? kw.dest_bitmap) as DisplayIoBitmap;
+      const source = (pos[1] ?? kw.source_bitmap) as DisplayIoBitmap;
+      if (!dest?.pixels || !source?.pixels) throw new TypeError('Expected displayio.Bitmaps');
+      const x = Math.trunc(Number(pos[2] ?? kw.x ?? 0));
+      const y = Math.trunc(Number(pos[3] ?? kw.y ?? 0));
+      const x1 = Math.max(0, Math.min(source.width, Math.trunc(Number(kw.x1 ?? 0))));
+      const y1 = Math.max(0, Math.min(source.height, Math.trunc(Number(kw.y1 ?? 0))));
+      const x2 = Math.max(x1, Math.min(source.width, Math.trunc(Number(kw.x2 ?? source.width))));
+      const y2 = Math.max(y1, Math.min(source.height, Math.trunc(Number(kw.y2 ?? source.height))));
+      const skipSource = kw.skip_source_index == null ? null : Number(kw.skip_source_index);
+      const skipDest = kw.skip_dest_index == null ? null : Number(kw.skip_dest_index);
+      const pixels = source === dest ? source.pixels.slice() : source.pixels;
+      for (let sy = y1; sy < y2; sy++) {
+        for (let sx = x1; sx < x2; sx++) {
+          const dx = x + sx - x1, dy = y + sy - y1;
+          const value = pixels[sy * source.width + sx];
+          const destValue = dest.pixels[dy * dest.width + dx];
+          if (dx >= 0 && dx < dest.width && dy >= 0 && dy < dest.height && value !== skipSource && destValue !== skipDest) {
+            dest.pixels[dy * dest.width + dx] = value;
+            if (value) dest.nonzeroCount = Math.max(1, dest.nonzeroCount ?? 0);
+          }
+        }
+      }
+      sceneDirty = true;
+    },
     draw_line: (bitmap: DisplayIoBitmap, x1: number, y1: number, x2: number, y2: number, value: number) => {
       if (!bitmap.pixels) throw new TypeError('Expected a displayio.Bitmap');
       let x = Math.trunc(x1), y = Math.trunc(y1);
@@ -919,7 +958,7 @@ export function createPythonRuntimeEnv(
         set text(v: string) {
           txt = String(v ?? '');
           sceneDirty = true;
-          flushDisplayIo();
+          flushIfAuto();
         },
         get color() {
           return col;
@@ -927,7 +966,7 @@ export function createPythonRuntimeEnv(
         set color(v: number | null) {
           col = v ?? 0xffffff;
           sceneDirty = true;
-          flushDisplayIo();
+          flushIfAuto();
         },
         get x() {
           return x;
@@ -935,7 +974,7 @@ export function createPythonRuntimeEnv(
         set x(v: number) {
           x = Number(v) || 0;
           sceneDirty = true;
-          flushDisplayIo();
+          flushIfAuto();
         },
         get y() {
           return y;
@@ -943,7 +982,7 @@ export function createPythonRuntimeEnv(
         set y(v: number) {
           y = Number(v) || 0;
           sceneDirty = true;
-          flushDisplayIo();
+          flushIfAuto();
         },
         get scale() {
           return scale;
@@ -951,7 +990,7 @@ export function createPythonRuntimeEnv(
         set scale(v: number) {
           scale = Number(v) || 1;
           sceneDirty = true;
-          flushDisplayIo();
+          flushIfAuto();
         },
       };
       return node;
@@ -974,7 +1013,7 @@ export function createPythonRuntimeEnv(
       set fill(v: number | null) {
         fill = v;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
       get outline() {
         return outline;
@@ -982,7 +1021,7 @@ export function createPythonRuntimeEnv(
       set outline(v: number | null) {
         outline = v;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
     };
   };
@@ -1004,7 +1043,7 @@ export function createPythonRuntimeEnv(
       set fill(v: number | null) {
         fill = v;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
       get outline() {
         return outline;
@@ -1012,7 +1051,7 @@ export function createPythonRuntimeEnv(
       set outline(v: number | null) {
         outline = v;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
     };
   };
@@ -1032,7 +1071,7 @@ export function createPythonRuntimeEnv(
       set fill(v: number | null) {
         fill = v;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
       get outline() {
         return outline;
@@ -1040,7 +1079,7 @@ export function createPythonRuntimeEnv(
       set outline(v: number | null) {
         outline = v;
         sceneDirty = true;
-        flushDisplayIo();
+        flushIfAuto();
       },
     };
   };
@@ -1212,7 +1251,7 @@ export function createPythonRuntimeEnv(
 
   const time = {
     sleep: async (sec: number) => {
-      flushDisplayIo();
+      flushIfAuto();
       await pySleep(Number(sec) || 0);
     },
     monotonic: () => callbacks.getMillis() / 1000,
@@ -1327,6 +1366,8 @@ export function createPythonRuntimeEnv(
         return names.includes('Exception') || names.includes(error.name);
       },
       len: __pyLen,
+      hasattr: (value: unknown, name: unknown) =>
+        value !== null && value !== undefined && String(name) in Object(value),
       str: (v: unknown) => String(v ?? ''),
       int: (v: unknown) => parseInt(String(v), 10) || 0,
       float: (v: unknown) => parseFloat(String(v)) || 0,

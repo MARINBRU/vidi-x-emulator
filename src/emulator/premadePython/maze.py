@@ -8,8 +8,14 @@ collected = 0
 show_map = True
 old_b = False
 old_a = False
+first_frame = True
 
 while True:
+    previous_x = player_x
+    previous_y = player_y
+    previous_angle = player_angle
+    previous_coins = collected
+    previous_map = show_map
     move_player()
     for i in range(5):
         dx = coin_x[i] - player_x
@@ -37,29 +43,36 @@ while True:
         beep(650)
     old_a = pressed_a
     old_b = pressed_b
-    render_walls()
-    # Draw farthest first so nearer coins cover farther coins.
-    order = [0, 1, 2, 3, 4]
-    for i in range(5):
-        for j in range(i + 1, 5):
-            a = order[i]
-            b = order[j]
-            da = (coin_x[a] - player_x) * (coin_x[a] - player_x) + (coin_y[a] - player_y) * (coin_y[a] - player_y)
-            db = (coin_x[b] - player_x) * (coin_x[b] - player_x) + (coin_y[b] - player_y) * (coin_y[b] - player_y)
-            if db > da:
-                order[i] = b
-                order[j] = a
-    for position in range(5):
-        i = order[position]
-        if coin_taken[i] == 0:
-            render_sprite(coin_x[i], coin_y[i], 6, 1)
-    if show_map:
-        draw_map()
+    # A still scene does not need to be cleared and sent to the LCD again.
+    redraw = first_frame or player_x != previous_x or player_y != previous_y or player_angle != previous_angle
+    redraw = redraw or collected != previous_coins or show_map != previous_map
+    if redraw:
+        render_walls()
+        # Draw farthest first so nearer coins cover farther coins.
+        order = [0, 1, 2, 3, 4]
         for i in range(5):
+            for j in range(i + 1, 5):
+                a = order[i]
+                b = order[j]
+                da = (coin_x[a] - player_x) * (coin_x[a] - player_x) + (coin_y[a] - player_y) * (coin_y[a] - player_y)
+                db = (coin_x[b] - player_x) * (coin_x[b] - player_x) + (coin_y[b] - player_y) * (coin_y[b] - player_y)
+                if db > da:
+                    order[i] = b
+                    order[j] = a
+        for position in range(5):
+            i = order[position]
             if coin_taken[i] == 0:
-                rectangle(116 + int(coin_x[i] * 4), 3 + int(coin_y[i] * 4), 2, 2, 6)
-    if collected == 5:
-        hud("MAZE CLEARED! B: RESTART")
+                render_sprite(coin_x[i], coin_y[i], 6, 1)
+        if show_map:
+            draw_map()
+            for i in range(5):
+                if coin_taken[i] == 0:
+                    rectangle(116 + int(coin_x[i] * 4), 3 + int(coin_y[i] * 4), 2, 2, 6)
+        if collected == 5:
+            hud("MAZE CLEARED! B: RESTART")
+        else:
+            hud("COINS " + str(collected) + "/5  B: MAP")
+        present_3d()
+        first_frame = False
     else:
-        hud("COINS " + str(collected) + "/5  B: MAP")
-    frame_pause()
+        idle_3d()

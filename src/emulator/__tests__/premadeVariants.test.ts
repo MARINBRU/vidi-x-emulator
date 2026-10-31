@@ -298,11 +298,13 @@ player_y = 4.5
 player_angle = 0.0
 render_walls()
 render_sprite(4.5, 4.5, 6, 1)
+screen.refresh()
 print("FRONT")
 time.sleep(0.3)
 player_angle = 1.570796
 render_walls()
 render_sprite(1.5, 7.5, 6, 1)
+screen.refresh()
 print("TURNED")
 time.sleep(0.3)
 player_x = 1.5
@@ -310,6 +312,7 @@ player_y = 2.5
 player_angle = 0.0
 render_walls()
 render_sprite(3.5, 2.5, 6, 1)
+screen.refresh()
 print("OCCLUDED")
 while True:
     time.sleep(0.1)
@@ -365,3 +368,130 @@ it('selects the answer under each touch on the Python quiz', async () => {
     expect(board.state.compileError).toBeNull();
   } finally { cluster.stopBoard(board.state.id); }
 }, 5000);
+
+it('keeps CircuitPython display changes hidden until a manual refresh', async () => {
+  const cluster = new VidiXClusterManager();
+  const board = cluster.getBoards()[0];
+  const source = `${pythonBase}\n
+screen.auto_refresh = False
+canvas.fill(6)
+print("QUEUED")
+time.sleep(0.3)
+screen.refresh()
+print("PRESENTED")
+time.sleep(0.3)
+canvas.fill(3)
+screen.auto_refresh = True
+print("AUTOMATIC")
+while True:
+    time.sleep(0.1)
+`;
+  try {
+    cluster.updateSketch(board.state.id, source, 'Manual refresh');
+    cluster.startBoard(board.state.id);
+    await wait(180);
+    expect(board.state.serialLog.some((line) => line.text.includes('QUEUED'))).toBe(true);
+    expect(board.display.readPixel(40, 80)).toBe(0);
+    await wait(300);
+    expect(board.state.serialLog.some((line) => line.text.includes('PRESENTED'))).toBe(true);
+    expect(board.display.readPixel(40, 80)).toBe(rgb888To565(0xFFCC33));
+    await wait(300);
+    expect(board.state.serialLog.some((line) => line.text.includes('AUTOMATIC'))).toBe(true);
+    expect(board.display.readPixel(40, 80)).toBe(rgb888To565(0x3366AA));
+    expect(board.state.compileError).toBeNull();
+  } finally { cluster.stopBoard(board.state.id); }
+}, 4000);
+
+it('keeps the faster 3D camera and depth buffer aligned in all four directions', async () => {
+  const cluster = new VidiXClusterManager();
+  const board = cluster.getBoards()[0];
+  const source = `${pythonBase}\n${pythonRaycast}\n
+player_x = 1.5
+player_y = 4.5
+player_angle = 0.0
+render_walls()
+print("EAST", int(depth[20] * 10 + 0.5))
+render_sprite(3.5, 4.0, 6, 1)
+render_sprite(3.5, 5.0, 6, 1)
+screen.refresh()
+time.sleep(0.3)
+player_angle = 1.57079632679
+render_walls()
+print("SOUTH", int(depth[20] * 10 + 0.5))
+player_angle = 3.14159265359
+render_walls()
+print("WEST", int(depth[20] * 10 + 0.5))
+player_angle = -1.57079632679
+render_walls()
+print("NORTH", int(depth[20] * 10 + 0.5))
+screen.refresh()
+while True:
+    time.sleep(0.1)
+`;
+  try {
+    cluster.updateSketch(board.state.id, source, 'Camera projection');
+    cluster.startBoard(board.state.id);
+    await wait(180);
+    expect(board.display.readPixel(90, 120)).toBe(rgb888To565(0xFFCC33));
+    expect(board.display.readPixel(230, 120)).toBe(rgb888To565(0xFFCC33));
+    await wait(300);
+    const log = board.state.serialLog.map((line) => line.text).join('');
+    expect(log).toContain('EAST 75');
+    expect(log).toContain('SOUTH 45');
+    expect(log).toContain('WEST 5');
+    expect(log).toContain('NORTH 35');
+    expect(board.state.compileError).toBeNull();
+  } finally { cluster.stopBoard(board.state.id); }
+}, 4000);
+
+it.each(['premade-3d-maze', 'premade-3d-fps-1p', 'premade-3d-fps-2p'])(
+  '%s renders with CircuitPython bitmaptools that has no blit', (id) => {
+    const temp = mkdtempSync(join(tmpdir(), 'vidix-no-blit-'));
+    try {
+      const path = join(temp, 'code.py');
+      writeFileSync(path, example(id, 'python').sketchCode);
+      const result = spawnSync('python3', [fileURLToPath(new URL('./fixtures/premade_circuitpython_harness.py', import.meta.url)), path, id],
+        { encoding: 'utf8', env: { ...process.env, PREMADE_NO_BLIT: '1' } });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain('PASS');
+    } finally { rmSync(temp, { recursive: true, force: true }); }
+  }
+);
+
+it('ships the same standalone maze file as the Python premade', async () => {
+  const { readFileSync } = await import('node:fs');
+  const standalone = readFileSync(new URL('../../../examples/CircuitPythonMaze/code.py', import.meta.url), 'utf8');
+  expect(standalone).toBe(example('premade-3d-maze', 'python').sketchCode);
+});
+
+it('copies a cropped displayio bitmap with CircuitPython skip indices', async () => {
+  const cluster = new VidiXClusterManager();
+  const board = cluster.getBoards()[0];
+  const source = `import board
+import displayio
+import bitmaptools
+import time
+src = displayio.Bitmap(4, 1, 16)
+dst = displayio.Bitmap(4, 1, 16)
+src[0] = 1
+src[1] = 2
+src[2] = 3
+src[3] = 4
+dst.fill(9)
+bitmaptools.blit(dst, src, 0, 0, x1=1, x2=4, skip_source_index=3)
+print("CROP", dst[0], dst[1], dst[2], dst[3])
+bitmaptools.blit(dst, src, 0, 0, skip_dest_index=9)
+print("SKIP", dst[0], dst[1], dst[2], dst[3])
+while True:
+    time.sleep(0.1)
+`;
+  try {
+    cluster.updateSketch(board.state.id, source, 'Bitmap blit');
+    cluster.startBoard(board.state.id);
+    await wait(140);
+    const log = board.state.serialLog.map((line) => line.text).join('');
+    expect(log).toContain('CROP 2 9 4 9');
+    expect(log).toContain('SKIP 1 9 3 9');
+    expect(board.state.compileError).toBeNull();
+  } finally { cluster.stopBoard(board.state.id); }
+}, 3000);

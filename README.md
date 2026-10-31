@@ -35,7 +35,7 @@ A full-featured, multi-instance browser emulator for the **VIDI X (ESP32-WROVER)
 
 On the Home screen, choose **C++** or **Python** next to any example, then run it or copy it to Saved Projects. Block templates also retain their **Blocks** choice. Each language is a separate premade program: selecting a language does not convert or replace an existing saved project, and a saved copy keeps its chosen mode.
 
-The Python versions use CircuitPython 9's built-in `board.DISPLAY`, `displayio`, `bitmaptools`, and other standard modules. The 3D games are independent, lower-resolution implementations of the maze and FPS games, so their appearance and speed differ from the C++ versions. The two-board Pong and FPS examples exchange compatible ESP-NOW packets between C++ and Python. Make sure both real boards use the same Wi-Fi channel.
+The Python versions use CircuitPython 9's built-in `board.DISPLAY`, `displayio`, `bitmaptools`, and other standard modules. The 3D games are independent, lower-resolution implementations of the maze and FPS games, so their appearance and speed differ from the C++ versions. They draw a complete frame before updating the display; the maze also avoids redrawing an unchanged view. The actual frame rate and any remaining LCD scan-line tearing depend on the hardware. The optimized maze is also available as [`examples/CircuitPythonMaze/code.py`](examples/CircuitPythonMaze/code.py). Existing saved copies are not overwritten; make a new copy to get the updated code. The two-board Pong and FPS examples exchange compatible ESP-NOW packets between C++ and Python. Make sure both real boards use the same Wi-Fi channel.
 
 Hardware details for the Python examples:
 
@@ -81,7 +81,7 @@ The starter and gyro example are tested in the simulator and against strict host
 
 Devices normally discover each other when they have the same public IP address. If they do not appear, enter the same optional room code on both devices (also supported by LocalShare). Room codes are not passwords, so share only with trusted devices. TextShare relays content through the server in memory without writing it to disk; its history is held in the browser tab until cleared, refreshed, or closed.
 
-On the Ubuntu VM, run `bash setup.sh` from the repository to build and deploy the emulator, LocalShare, and TextShare. If automatic updates are using apt, setup waits up to 15 minutes for the package lock; it never deletes lock files. The existing LocalShare systemd service handles both sharing pages; no additional Cloudflare Tunnel is needed.
+On the Ubuntu VM, run `bash setup.sh` from the repository to build and deploy the emulator, LocalShare, and TextShare. Setup attempts to enable network time if the system clock is not synchronized, and it waits up to 15 minutes for apt locks without deleting lock files. If apt reports a repository file is “not valid yet”, check `timedatectl`, the VirtualBox host's clock, and the VM's access to network time (UDP 123); setup does not bypass apt's date checks. The existing LocalShare systemd service handles both sharing pages; no additional Cloudflare Tunnel is needed.
 
 ## Development
 

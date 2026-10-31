@@ -27,7 +27,7 @@ while True:
             forward = dx * math.cos(player_angle) + dy * math.sin(player_angle)
             sideways = -dx * math.sin(player_angle) + dy * math.cos(player_angle)
             if drone_hp[i] > 0 and forward > 0.2 and abs(sideways) < 0.3:
-                if forward < nearest and forward < depth[40] + 0.08:
+                if forward < nearest and forward < depth[int(RAY_COUNT / 2)] + 0.08:
                     target = i
                     nearest = forward
         if target >= 0:
@@ -98,4 +98,4 @@ while True:
         hud("ARENA CLEARED - B RESTART")
     else:
         hud("HP " + str(hp) + " AMMO " + str(ammo) + " KILLS " + str(kills))
-    frame_pause()
+    present_3d()

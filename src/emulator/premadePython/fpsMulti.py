@@ -62,7 +62,7 @@ while True:
         dy = peer_y - player_y
         forward = dx * math.cos(player_angle) + dy * math.sin(player_angle)
         sideways = -dx * math.sin(player_angle) + dy * math.cos(player_angle)
-        if forward > 0.2 and abs(sideways) < 0.4 and forward < depth[40] + 0.08:
+        if forward > 0.2 and abs(sideways) < 0.4 and forward < depth[int(RAY_COUNT / 2)] + 0.08:
             if connected:
                 radio.send("HIT,34")
             else:
@@ -79,4 +79,4 @@ while True:
     line(80, 57, 80, 63, 6)
     rectangle(73, 103, 14, 17, 3)
     hud("P" + str(role + 1) + " HP " + str(hp) + " FRAGS " + str(frags))
-    frame_pause()
+    present_3d()

@@ -8,6 +8,23 @@ import types
 path, example = sys.argv[1:3]
 claimed = {18: "built-in display clock", 23: "built-in display MOSI", 5: "display CS", 21: "display DC"}
 frame = 0
+scene_changes = 0
+canvas_clears = 0
+wall_regions = 0
+trig_calls = 0
+real_sin, real_cos = math.sin, math.cos
+
+def counted_sin(value):
+    global trig_calls
+    trig_calls += 1
+    return real_sin(value)
+
+def counted_cos(value):
+    global trig_calls
+    trig_calls += 1
+    return real_cos(value)
+
+math.sin, math.cos = counted_sin, counted_cos
 sent = []
 terminals = []
 
@@ -30,7 +47,11 @@ class Bitmap:
         assert width > 0 and height > 0 and values >= 1
         self.width, self.height, self.values = width, height, values
     def fill(self, value):
+        global scene_changes, canvas_clears
         assert 0 <= value < self.values
+        scene_changes += 1
+        if self.width == 160 and self.height == 120:
+            canvas_clears += 1
 
 class Palette:
     def __init__(self, count):
@@ -64,6 +85,8 @@ class Terminal:
         self.writes = []
         terminals.append(self)
     def write(self, text):
+        global scene_changes
+        scene_changes += 1
         assert isinstance(text, str)
         assert all(len(line) <= self.grid.width for line in text.split('\r')), (text, self.grid.width)
         self.writes.append(text)
@@ -71,20 +94,48 @@ class Terminal:
 class Display:
     width, height = 320, 240
     root_group = None
+    auto_refresh = True
+    refresh_count = 0
+    presented_changes = 0
+    def refresh(self, *, target_frames_per_second=None, minimum_frames_per_second=0):
+        assert not self.auto_refresh, "3D frames must use manual refresh"
+        assert target_frames_per_second is None and minimum_frames_per_second == 0
+        assert scene_changes > self.presented_changes, "unexpected duplicate/empty refresh"
+        self.presented_changes = scene_changes
+        self.refresh_count += 1
+        return True
 
 def region(bitmap, x1, y1, x2, y2, value):
+    global scene_changes, wall_regions
+    scene_changes += 1
+    if bitmap.width == 160 and bitmap.height == 120 and x2 - x1 == 4 and value in (2, 3, 4, 7):
+        wall_regions += 1
     assert all(isinstance(v, int) for v in (x1, y1, x2, y2, value))
     assert 0 <= x1 <= x2 <= bitmap.width and 0 <= y1 <= y2 <= bitmap.height
     assert 0 <= value < bitmap.values
 
 def draw_line(bitmap, x1, y1, x2, y2, value):
+    global scene_changes
+    scene_changes += 1
     assert all(isinstance(v, int) for v in (x1, y1, x2, y2, value))
     assert 0 <= x1 < bitmap.width and 0 <= x2 < bitmap.width
     assert 0 <= y1 < bitmap.height and 0 <= y2 < bitmap.height
     assert 0 <= value < bitmap.values
 
 module("displayio", Bitmap=Bitmap, Palette=Palette, Group=Group, TileGrid=TileGrid)
-module("bitmaptools", fill_region=region, draw_line=draw_line)
+def blit(dest_bitmap, source_bitmap, x, y, *, x1=0, y1=0, x2=None, y2=None,
+         skip_source_index=None, skip_dest_index=None):
+    global scene_changes
+    scene_changes += 1
+    assert isinstance(dest_bitmap, Bitmap) and isinstance(source_bitmap, Bitmap)
+    assert 0 <= x < dest_bitmap.width and 0 <= y < dest_bitmap.height
+    assert x + source_bitmap.width <= dest_bitmap.width
+    assert y + source_bitmap.height <= dest_bitmap.height
+
+if os.environ.get("PREMADE_NO_BLIT") == "1":
+    module("bitmaptools", fill_region=region, draw_line=draw_line)
+else:
+    module("bitmaptools", fill_region=region, draw_line=draw_line, blit=blit)
 module("terminalio", FONT=Font(), Terminal=Terminal)
 
 class DigitalInOut:
@@ -178,7 +229,8 @@ pins = dict(GPIO0=0, STATUS=2, TOUCH_CS=4, TOUCH_IRQ=12, MENU=13, MIC=14,
             BTN_UP_DOWN=35, GPIO39=39)
 def spi():
     raise ValueError("built-in display owns SPI pins")
-module("board", DISPLAY=Display(), SPI=spi, **pins)
+display = Display()
+module("board", DISPLAY=display, SPI=spi, **pins)
 module("digitalio", DigitalInOut=DigitalInOut,
        Pull=types.SimpleNamespace(UP="UP", DOWN="DOWN"),
        Direction=types.SimpleNamespace(INPUT="INPUT", OUTPUT="OUTPUT"))
@@ -227,6 +279,9 @@ module("wifi", radio=types.SimpleNamespace(mac_address=bytes([0x24, 0x6f, 0x28, 
 
 def sleep(_seconds):
     global frame
+    if not display.auto_refresh:
+        assert display.refresh_count > 0, "manual display slept before its first frame"
+        assert display.presented_changes == scene_changes, "slept with a partially drawn frame"
     frame += 1
     if frame >= 4:
         raise Finished()
@@ -237,4 +292,12 @@ except Finished:
     pass
 assert frame >= 4
 assert terminals, "the example did not create a text terminal"
+if not display.auto_refresh:
+    assert 2 <= display.refresh_count <= frame
+    if example in ("premade-3d-maze", "premade-block-3"):
+        # Initial frame, moving frame, map toggle; no redraw while idle.
+        assert display.refresh_count == 3, display.refresh_count
+        assert canvas_clears == 0, "the maze clears the full canvas before drawing"
+        assert wall_regions == 40 * display.refresh_count, wall_regions
+        assert trig_calls <= 2 * display.refresh_count + 2, trig_calls
 print("PASS", example, "frames", frame, "packets", len(sent))
