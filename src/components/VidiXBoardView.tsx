@@ -636,11 +636,11 @@ export const VidiXBoardView: React.FC<VidiXBoardViewProps> = ({
               </div>
             </div>
 
-            {/* SELECT & START Microswitches (GPIO 27 Ladder) */}
+            {/* SELECT on GPIO 27, START on GPIO 39 (active low). */}
             <div className="w-full flex items-center justify-between gap-1.5 px-1 font-mono">
               <button
                 {...bindBtn('SELECT')}
-                title="SELECT Button (GPIO 27 ADC=4095 | Key: Shift)"
+                title="SELECT Button (GPIO 27, active low | Key: Shift)"
                 className={`flex-1 py-1 px-1.5 bg-[#14171f] border text-[8px] font-bold tracking-wider uppercase cursor-pointer ${
                   state.buttons.SELECT
                     ? 'border-amber-300 text-amber-300 translate-y-[1px]'
@@ -651,7 +651,7 @@ export const VidiXBoardView: React.FC<VidiXBoardViewProps> = ({
               </button>
               <button
                 {...bindBtn('START')}
-                title="START Button (GPIO 27 ADC=2000 | Key: Enter)"
+                title="START Button (GPIO 39, active low | Key: Enter)"
                 className={`flex-1 py-1 px-1.5 bg-[#14171f] border text-[8px] font-bold tracking-wider uppercase cursor-pointer ${
                   state.buttons.START
                     ? 'border-amber-300 text-amber-300 translate-y-[1px]'
@@ -729,7 +729,7 @@ export const VidiXBoardView: React.FC<VidiXBoardViewProps> = ({
               <div className="mt-1 flex items-center justify-between px-1">
                 <span className="text-[7px] font-mono text-zinc-500">SPI: CS5 DC21 MOSI23 SCK18</span>
                 <div className="w-14 h-1.5 bg-gradient-to-r from-amber-600/70 via-amber-400/80 to-amber-600/70 border border-amber-300/30" />
-                <span className="text-[7px] font-mono text-zinc-500">T_CS14 IRQ2</span>
+                <span className="text-[7px] font-mono text-zinc-500">T_CS4 IRQ12</span>
               </div>
             </div>
 

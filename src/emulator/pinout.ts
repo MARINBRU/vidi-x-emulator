@@ -25,7 +25,9 @@ export const VIDI_X_PINS = {
   BTN_UD: 35, // ADC1_CH7: UP = 4095 (>4000), DOWN = 2000 (1800..2200)
   BTN_UP_DOWN: 35,
   UP_DOWN: 35,
-  BTN_SELECT_START: 27, // ADC2_CH7: SELECT = 4095, START = 2000
+  BTN_SELECT_START: 27, // Legacy simulator analog alias: SELECT = 4095, START = 2000
+  BTN_START_GPIO: 39, // VIDI X v1.1 START, active low (input-only GPIO)
+  BTN_SELECT_GPIO: 27, // VIDI X v1.1 SELECT, active low
   BTN_A: 32, // Tipka A / Action Button A (GPIO 32)
   Tipka_A: 32,
   BTN_B: 33, // Tipka B / Action Button B (GPIO 33)
@@ -72,14 +74,14 @@ export const EXPANSION_HEADER_PINS: ExpansionPinDef[] = [
   { headerPin: 3, name: '5V', gpio: null, type: 'POWER_5V', capabilities: ['5V'], description: '5V USB/Boost Rail' },
   { headerPin: 4, name: 'EN', gpio: null, type: 'SYS', capabilities: ['RESET'], description: 'ESP32 Chip Enable / Reset' },
   { headerPin: 5, name: 'GPIO36', gpio: 36, type: 'GPIO', capabilities: ['ADC1_0', 'MIC_VP'], description: 'Microphone / Analog VP' },
-  { headerPin: 6, name: 'GPIO39', gpio: 39, type: 'GPIO', capabilities: ['ADC1_3', 'LDR_VN'], description: 'Light Sensor LDR / VN' },
+  { headerPin: 6, name: 'GPIO39', gpio: 39, type: 'GPIO', capabilities: ['ADC1_3', 'START', 'LDR_VN'], description: 'START (active low) / legacy light-sensor ADC' },
   { headerPin: 7, name: 'GPIO34', gpio: 34, type: 'GPIO', capabilities: ['ADC1_6', 'BTN_LR'], description: 'D-Pad LEFT(4095) / RIGHT(2000)' },
   { headerPin: 8, name: 'GPIO35', gpio: 35, type: 'GPIO', capabilities: ['ADC1_7', 'BTN_UD'], description: 'D-Pad UP(4095) / DOWN(2000)' },
   { headerPin: 9, name: 'GPIO32', gpio: 32, type: 'GPIO', capabilities: ['ADC1_4', 'BTN_A'], description: 'Tipka A (Action Button A)' },
   { headerPin: 10, name: 'GPIO33', gpio: 33, type: 'GPIO', capabilities: ['ADC1_5', 'BTN_B'], description: 'Tipka B (Action Button B)' },
   { headerPin: 11, name: 'GPIO25', gpio: 25, type: 'GPIO', capabilities: ['DAC1', 'SPEAKER'], description: 'Piezo Speaker / Audio DAC1' },
   { headerPin: 12, name: 'GPIO26', gpio: 26, type: 'GPIO', capabilities: ['DAC2', 'TEMP', 'RGB'], description: 'Temp Sensor / 5x WS2812B RGB' },
-  { headerPin: 13, name: 'GPIO27', gpio: 27, type: 'GPIO', capabilities: ['ADC2_7', 'SEL_START'], description: 'SELECT(4095) / START(2000)' },
+  { headerPin: 13, name: 'GPIO27', gpio: 27, type: 'GPIO', capabilities: ['ADC2_7', 'SELECT'], description: 'SELECT (active low) / legacy SELECT-START ADC' },
   { headerPin: 14, name: 'GPIO14', gpio: 14, type: 'GPIO', capabilities: ['MIC_PRE'], description: 'Mic Preamp Out' },
   { headerPin: 15, name: 'GPIO12', gpio: 12, type: 'GPIO', capabilities: ['TOUCH_IRQ', 'IR_TX', 'HSPI_MISO'], description: 'Touch IRQ / IR Transmitter LED' },
   { headerPin: 16, name: 'GPIO13', gpio: 13, type: 'GPIO', capabilities: ['MENU', 'RELAY'], description: 'MENU / Volume / Expansion IO' },
@@ -118,6 +120,11 @@ export function createInitialPins(): Record<number, PinState> {
         isExternalDriven: false,
       };
     }
+  }
+
+  // START is input-only and externally biased high on VIDI X v1.1.
+  if (pins[VIDI_X_PINS.BTN_START_GPIO]) {
+    pins[VIDI_X_PINS.BTN_START_GPIO].digitalValue = 1;
   }
 
   // The XPT2046 interrupt is active-low and idles high when not touched.
@@ -198,18 +205,12 @@ export function syncHardwareToPins(
     }
   }
 
-  // 3. GPIO 27: SELECT / START analog resistor ladder (also digital INPUT_PULLUP)
+  // GPIO27 is the physical SELECT button. Preserve the older simulator's
+  // SELECT/START analog ladder for existing sketches, but digitalRead(27)
+  // must not report SELECT when only START is pressed.
   if (pins[27] && !pins[27].isExternalDriven && pins[27].mode !== 'OUTPUT') {
-    if (buttons.SELECT) {
-      pins[27].analogValue = 4095;
-      pins[27].digitalValue = 0;
-    } else if (buttons.START) {
-      pins[27].analogValue = 2000;
-      pins[27].digitalValue = 0;
-    } else {
-      pins[27].analogValue = 0;
-      pins[27].digitalValue = 1;
-    }
+    pins[27].analogValue = buttons.SELECT ? 4095 : buttons.START ? 2000 : 0;
+    pins[27].digitalValue = buttons.SELECT ? 0 : 1;
   }
 
   // 4. GPIO 32: Tipka A (Action Button A, active LOW)
@@ -290,7 +291,9 @@ export function syncHardwareToPins(
   }
 
   if (pins[39] && !pins[39].isExternalDriven) {
+    // Keep the legacy simulated sensor available through analogRead(39),
+    // while physical-style digitalRead(39) observes the START button.
     pins[39].analogValue = sensors.tempLightJumper === 'TEMP' ? tempAdc : lightAdc;
-    pins[39].digitalValue = pins[39].analogValue > 2048 ? 1 : 0;
+    pins[39].digitalValue = buttons.START ? 0 : 1;
   }
 }

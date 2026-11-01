@@ -10,15 +10,15 @@ The feature list below describes the **simulator's** hardware model. Some contro
 - **ILI9341 320×240 16-bit RGB565 TFT Display**: Full pixel framebuffer supporting `Adafruit_ILI9341`, `Adafruit_GFX`, and `TFT_eSPI` APIs (`fillScreen`, `drawPixel`, `drawLine`, `drawRect`, `fillRect`, `drawCircle`, `fillCircle`, `fillTriangle`, `print`, `println`, `printf`, `drawString`, `drawBitmap`, `pushImage`).
 - **XPT2046 Resistive Touchscreen (`TOUCH_CS = 4`, `TOUCH_IRQ = 12`)**: Click and drag directly on the 320×240 screen to trigger `ts.touched()` and `ts.getPoint()` (`x, y, z`).
 - **Simulated VIDI X Buttons (Both Analog Resistor Ladder & Digital Modes)**:
-  - **D-Pad UP / DOWN (`GPIO 35`)**: Analog resistor ladder (`UP = 4095`, `DOWN = 1950`, `IDLE = 0`) + direct `BTN_UP` / `BTN_DOWN` digital reads.
-  - **D-Pad LEFT / RIGHT (`GPIO 34`)**: Analog resistor ladder (`LEFT = 4095`, `RIGHT = 1950`, `IDLE = 0`) + direct `BTN_LEFT` / `BTN_RIGHT` digital reads.
-  - **SELECT / START (`GPIO 27`)**: Analog resistor ladder (`SELECT = 4095`, `START = 1950`, `IDLE = 0`) + direct `BTN_SELECT` / `BTN_START` digital reads.
+  - **D-Pad UP / DOWN (`GPIO 35`)**: Analog resistor ladder (`UP = 4095`, `DOWN = 2000`, `IDLE = 0`) + direct `BTN_UP` / `BTN_DOWN` digital reads.
+  - **D-Pad LEFT / RIGHT (`GPIO 34`)**: Analog resistor ladder (`LEFT = 4095`, `RIGHT = 2000`, `IDLE = 0`) + direct `BTN_LEFT` / `BTN_RIGHT` digital reads.
+  - **SELECT / START**: Physical-style `digitalRead(27)` is active-low SELECT and `digitalRead(39)` is active-low START. For older simulator sketches, `analogRead(27)` retains the virtual SELECT/START ladder (`SELECT = 4095`, `START = 2000`, `IDLE = 0`), and `BTN_SELECT` / `BTN_START` remain virtual digital aliases.
   - **Action Buttons `A` (`GPIO 32`) & `B` (`GPIO 33`)**: Tactile arcade buttons supporting both `INPUT_PULLUP` digital reads and analog reads.
   - **System Keys**: `MENU` / `VOL+` / `VOL-` (`GPIO 13`), `BOOT` (`GPIO 0`), `EN / RESET`, and `ON/OFF` power switch.
 - **Piezo Speaker / DAC1 Audio (`GPIO 25`)**: Real-time Web Audio square-wave synthesizer supporting `tone()`, `noTone()`, and `ledcWriteTone()` with per-board mute and volume controls.
 - **Virtual Environmental & Audio Sensors**:
   - **MCP9700A Temperature Sensor (`GPIO 26` / `GPIO 39` via jumper)**: Interactive `-10°C` to `60°C` slider ($V_{out} = 500\text{mV} + 10\text{mV}/^\circ\text{C}$).
-  - **Photoresistor Light Sensor (`GPIO 39 / SENSOR_VN`)**: Interactive `0%–100%` ambient light slider.
+  - **Legacy simulated light sensor (`analogRead(39)`)**: Interactive `0%–100%` slider retained for existing simulator sketches. `digitalRead(39)` reads START; this virtual analog mapping is not evidence of an onboard physical light sensor.
   - **Microphone AGC (`GPIO 36 / SENSOR_VP`)**: Real-time audio waveform generator on ADC1_CH0.
   - **Infrared Transceiver (`IR_PIN = 15`, `IR_TX_PIN = 12`)**: Virtual NEC IR remote buttons + cross-board IR broadcasting.
 - **Onboard LEDs & Virtual MicroSD Card (`SD_CS = 22`)**:
@@ -48,6 +48,10 @@ Hardware details for the Python examples:
 - The **Wired GPIO & UART Bridge** replaces the old misleading “MicroSD Telemetry” label; the original example was a bridge and did not log to SD. Cross each board's GPIO 15 (TX) to the other's GPIO 27 (RX), connect ground to ground, and optionally cross GPIO 26 to GPIO 14 for the digital signal. Those pins share IR TX, SELECT, RGB LEDs and the microphone, respectively; do not use those onboard functions while they are wired. Use 3.3 V logic, not 5 V, and verify the expansion header pinout before connecting. GPIO 16/17 are used by the WROVER's PSRAM and are not safe UART choices on physical hardware.
 
 The simulator, CircuitPython cross-compiler and host-side API mocks test these examples; they are not a substitute for testing on physical VIDI X boards.
+
+## C++ simulation compatibility
+
+The browser runs an Arduino C++ **subset** through a translator, not a full ESP32 compiler. The simulated `Preferences` API stores supported typed values per virtual board and namespace in browser local storage; if storage is blocked, values last only for the current page session. This is separate from the physical board's NVS. The emulator maps touch directly to display coordinates, so `calibrateTouch` does not perform physical calibration, and `ESP.getFreeHeap()` reports a simulated estimate. Real hardware and other libraries may behave differently.
 
 ## Compiling a C++ project for VIDI X
 

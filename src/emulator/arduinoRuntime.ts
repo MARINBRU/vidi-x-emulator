@@ -1,5 +1,7 @@
+import { parse as parseJavaScript, type Node as JavaScriptNode } from 'acorn';
 import { ILI9341Display, TFT_COLORS } from './display';
 import { VIDI_X_PINS } from './pinout';
+import { SimulatedPreferences } from './preferences';
 import {
   createPythonRuntimeEnv,
   isPythonCode,
@@ -119,7 +121,9 @@ export function transpileArduinoSketch(sourceCode: string): {
   // 1b. Strip LovyanGFX boilerplate class definitions: `class LGFX : public lgfx::LGFX_Device { ... };`
   code = stripClassDefinition(code, 'LGFX');
 
-  // 2. Process #include and #define directives
+  // 2. Process #include and #define directives. C/C++ line splices also let
+  // function-like macros span several source lines.
+  code = code.replace(/\\\n/g, '');
   const defines: Array<{ name: string; params: string[] | null; body: string }> = [];
   const lines = code.split('\n');
   const processedLines: string[] = [];
@@ -153,7 +157,9 @@ export function transpileArduinoSketch(sourceCode: string): {
       if (body.length > 0) {
         defines.push({ name, params, body });
       }
-      processedLines.push(`// #define ${name}`);
+      // Keep line positions without leaving a macro name in a JS comment,
+      // where a later expansion could mistake it for another invocation.
+      processedLines.push('');
       continue;
     }
     processedLines.push(lines[i]);
@@ -172,16 +178,46 @@ export function transpileArduinoSketch(sourceCode: string): {
     seg
       .replace(/::/g, '.')
       .replace(/\b(\d+\.\d+)[fF]\b/g, '$1')
-      .replace(/\b(\d+)[uUlL]+\b/g, '$1')
+      .replace(/\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]+\b/g, '$1')
   );
 
-  // Apply macros outside string literals
-  for (const def of defines) {
-    if (!def.params) {
-      const regex = new RegExp(`\\b${def.name}\\b`, 'g');
-      code = replaceOutsideStrings(code, (segment) => segment.replace(regex, `(${def.body})`));
+  // Expand both object-like and function-like expression macros before
+  // converting C++. Revisit definitions so macros can refer to one another.
+  for (let pass = 0; pass < 20; pass++) {
+    const before = code;
+    for (const def of defines) {
+      if (def.params) {
+        code = expandFunctionMacro(code, def.name, def.params, def.body);
+      } else {
+        const regex = new RegExp(`\\b${def.name}\\b`, 'g');
+        code = replaceOutsideStrings(code, (segment) => segment.replace(regex, () => `(${def.body})`));
+      }
     }
+    if (code === before) break;
+    if (pass === 19) throw new Error('Recursive or excessively nested macro definitions');
   }
+
+  // C++ enums supply integer constants (including anonymous typed enums).
+  // Keep expressions rather than evaluating them here, so constants defined
+  // earlier in the sketch can be used as enum initializers.
+  const enumNames = new Set<string>();
+  const enumValues = new Set<string>();
+  code = replaceOutsideStrings(code, (seg) => seg.replace(
+    /\benum\s+([A-Za-z_]\w*)?\s*(?::\s*[A-Za-z_]\w*)?\s*\{([^{}]*)\}\s*;/g,
+    (_match, name: string | undefined, body: string) => {
+      if (name) enumNames.add(name);
+      let previous = '';
+      const entries = splitTopLevelCommas(body).map((entry) => {
+        const match = entry.trim().match(/^([A-Za-z_]\w*)(?:\s*=\s*([\s\S]+))?$/);
+        if (!match) throw new Error(`Unsupported enum member: ${entry.trim()}`);
+        const value = match[2] || (previous ? `${previous} + 1` : '0');
+        enumValues.add(match[1]);
+        previous = match[1];
+        return `${match[1]} = ${value}`;
+      });
+      return entries.length ? `const ${entries.join(', ')};` : '';
+    }
+  ));
 
   // 3. Collect struct definitions and transform them into factory helpers
   const structNames = new Set<string>();
@@ -242,6 +278,10 @@ export function transpileArduinoSketch(sourceCode: string): {
     'var $1 = SerialBT;'
   );
   code = code.replace(
+    /\b(?:static\s+)?Preferences\s+([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*;/g,
+    'var $1 = new __Preferences();'
+  );
+  code = code.replace(
     /\bCRGB\s+([A-Za-z_]\w*)\s*\[([^\]]+)\]\s*;/g,
     'var $1 = __createCrgbArray($2);'
   );
@@ -278,6 +318,8 @@ export function transpileArduinoSketch(sourceCode: string): {
     'unsigned\\s+short',
     'unsigned\\s+char',
     'signed\\s+char',
+    'unsigned',
+    'signed',
     'long\\s+long',
     'uint8_t',
     'int8_t',
@@ -305,8 +347,49 @@ export function transpileArduinoSketch(sourceCode: string): {
     'IPAddress',
     'CRGB',
     ...Array.from(structNames),
+    ...Array.from(enumNames),
   ];
-  const typePattern = `(?:(?:const|static|volatile|PROGMEM|inline)\\s+)*(?:${baseTypes.join('|')})(?:\\s*\\*+)?`;
+  const typePattern = `(?:(?:const|constexpr|static|volatile|PROGMEM|inline)\\s+)*(?:${baseTypes.join('|')})(?:\\s*\\*+\\s*(?:const\\s*)?)?`;
+
+  // Keep conservative numeric type information for C++ integer division. If
+  // a name is used for both an integer and a float in different scopes, leave
+  // its divisions alone rather than changing floating-point behavior.
+  const numericNames = new Map<string, NumericKind>();
+  const numericDeclarations = new Map<string, Set<string>>();
+  const recordNumericName = (name: string, rawType: string) => {
+    const kind = numericTypeKind(rawType);
+    if (!kind) return;
+    const existing = numericNames.get(name);
+    numericNames.set(name, existing && existing !== kind ? 'ambiguous' : kind);
+    const type = rawType.replace(/\b(?:const|constexpr|static|volatile|PROGMEM|inline)\b/g, '').trim().replace(/\s+/g, ' ');
+    const types = numericDeclarations.get(name) ?? new Set<string>();
+    types.add(type);
+    numericDeclarations.set(name, types);
+  };
+  for (const name of enumValues) numericNames.set(name, 'integer');
+  replaceOutsideStrings(code, (seg) => {
+    const declaration = new RegExp(`\\b(${typePattern})\\s+([A-Za-z_]\\w*)`, 'g');
+    for (const match of seg.matchAll(declaration)) recordNumericName(match[2], match[1]);
+    const statement = new RegExp(`\\b(${typePattern})\\s+([^;{}]+);`, 'g');
+    for (const match of seg.matchAll(statement)) {
+      for (const part of splitTopLevelCommas(match[2])) {
+        const name = part.trim().match(/^([A-Za-z_]\w*)\s*(?:=|\[|$)/)?.[1];
+        if (name) recordNumericName(name, match[1]);
+      }
+    }
+    return seg;
+  });
+  const numericFunctions = new Map<string, NumericKind>();
+
+  // JavaScript bitwise operators produce signed values. Record unsigned 32-bit
+  // variables so their right shifts and XOR updates retain ESP32 semantics.
+  const unsigned32Vars = new Set<string>();
+  for (const match of code.matchAll(/\b(?:uint32_t|unsigned\s+(?:int|long))\s+([A-Za-z_]\w*)\s*(?=[=;,\)])/g)) {
+    const types = numericDeclarations.get(match[1]);
+    if (!types || [...types].every((type) => /^(?:uint32_t|unsigned(?: int| long)?|size_t)$/.test(type))) {
+      unsigned32Vars.add(match[1]);
+    }
+  }
 
   // 4b. Strip C++ function forward declarations / prototypes: e.g. `void initGame();` or `void drawMeteor(Meteor &m);`
   const funcProtoRegex = new RegExp(
@@ -318,53 +401,64 @@ export function transpileArduinoSketch(sourceCode: string): {
   // 5. Identify user functions and convert them to async functions
   const userFunctions = new Set<string>();
   const funcDeclRegex = new RegExp(
-    `(^|[\\n;{}])\\s*${typePattern}\\s+([A-Za-z_]\\w*)\\s*\\(([^)]*)\\)\\s*\\{`,
+    `(^|[\\n;{}])\\s*(${typePattern})\\s+([A-Za-z_]\\w*)\\s*\\(([^)]*)\\)\\s*\\{`,
     'gm'
   );
 
-  code = code.replace(funcDeclRegex, (_match, prefix, fnName, rawParams) => {
+  code = code.replace(funcDeclRegex, (_match, prefix, returnType, fnName, rawParams) => {
     userFunctions.add(fnName);
+    const returnKind = numericTypeKind(returnType);
+    if (returnKind) numericFunctions.set(fnName, returnKind);
     const cleanedParams = cleanParameterList(rawParams, typePattern);
-    return `${prefix}\nasync function ${fnName}(${cleanedParams}) {`;
+    const conversions = integerParameterConversions(rawParams, typePattern);
+    return `${prefix}\nasync function ${fnName}(${cleanedParams}) {${conversions}`;
   });
+
+  // Simple array pointers are common when filling display line buffers. Keep
+  // the base array and an element offset, and rewrite uses in their scope.
+  code = convertSimplePointers(code);
 
   // 6. Convert C++ cast expressions outside strings: (int)x, (int)(a + b), (float)y, etc.
   code = replaceOutsideStrings(code, (seg) => replaceCStyleCasts(seg));
 
   // 7. Convert 2D and 1D array declarations
   const arr2dInitRegex = new RegExp(
-    `\\b${typePattern}\\s+([A-Za-z_]\\w*)\\s*\\[([^\\]]*)\\]\\s*\\[([^\\]]*)\\]\\s*=\\s*\\{([\\s\\S]*?)\\}\\s*;`,
+    `\\b(${typePattern})\\s+([A-Za-z_]\\w*)\\s*\\[([^\\]]*)\\]\\s*\\[([^\\]]*)\\]\\s*=\\s*\\{([\\s\\S]*?)\\}\\s*;`,
     'g'
   );
-  code = code.replace(arr2dInitRegex, (_m, name, _d1, _d2, initBody) => {
+  code = code.replace(arr2dInitRegex, (_m, rawType, name, _d1, d2, initBody) => {
     const converted = initBody.replace(/\{/g, '[').replace(/\}/g, ']');
-    return `let ${name} = [${converted}];`;
+    const { size } = cppArrayType(rawType);
+    return `let ${name} = __sizedArray([${converted}], (${d2 || '0'}) * ${size});`;
   });
 
   const arr2dRegex = new RegExp(
-    `\\b${typePattern}\\s+([A-Za-z_]\\w*)\\s*\\[([^\\]]+)\\]\\s*\\[([^\\]]+)\\]\\s*;`,
+    `\\b(${typePattern})\\s+([A-Za-z_]\\w*)\\s*\\[([^\\]]+)\\]\\s*\\[([^\\]]+)\\]\\s*;`,
     'g'
   );
-  code = code.replace(arr2dRegex, (_m, name, d1, d2) => {
-    return `let ${name} = Array.from({ length: ${d1} }, () => new Array(${d2}).fill(0));`;
+  code = code.replace(arr2dRegex, (_m, rawType, name, d1, d2) => {
+    const { ctor, size } = cppArrayType(rawType);
+    const row = ctor ? `new ${ctor}(${d2})` : `new Array(${d2}).fill(0)`;
+    return `let ${name} = __sizedArray(Array.from({ length: ${d1} }, () => ${row}), (${d2}) * ${size});`;
   });
 
   // 1D array with initializer: int arr[] = {1, 2, 3};
   const arr1dInitRegex = new RegExp(
-    `\\b${typePattern}\\s+([A-Za-z_]\\w*)\\s*\\[[^\\]]*\\]\\s*(?:PROGMEM\\s*)?=\\s*\\{([\\s\\S]*?)\\}\\s*;`,
+    `\\b(${typePattern})\\s+([A-Za-z_]\\w*)\\s*\\[([^\\]]*)\\]\\s*(?:PROGMEM\\s*)?=\\s*\\{([\\s\\S]*?)\\}\\s*;`,
     'g'
   );
-  code = code.replace(arr1dInitRegex, (_m, name, initBody) => {
+  code = code.replace(arr1dInitRegex, (_m, rawType, name, len, initBody) => {
     const converted = initBody.replace(/\{/g, '[').replace(/\}/g, ']');
-    return `let ${name} = [${converted}];`;
+    const { ctor, size } = cppArrayType(rawType);
+    if (ctor) return `let ${name} = __makeTypedArray(${ctor}, ${len || 'null'}, [${converted}]);`;
+    return `let ${name} = __sizedArray([${converted}], ${size});`;
   });
 
   // char str[32] = "hello";
-  const charArrStrRegex = new RegExp(
-    `\\b(?:const\\s+)?char\\s+([A-Za-z_]\\w*)\\s*\\[[^\\]]*\\]\\s*=\\s*("[^"]*");`,
-    'g'
+  const charArrStrRegex = /\b(?:const\s+)?char\s+([A-Za-z_]\w*)\s*\[([^\]]*)\]\s*=\s*("(?:\\.|[^"\\])*")\s*;/g;
+  code = code.replace(charArrStrRegex, (_match, name: string, length: string, value: string) =>
+    `let ${name} = __makeCharBuffer(${length.trim() || 'null'}, ${value});`
   );
-  code = code.replace(charArrStrRegex, 'let $1 = $2;');
 
   // Uninitialized 1D array: int arr[10]; or StructName items[10];
   const arr1dRegex = new RegExp(
@@ -372,12 +466,15 @@ export function transpileArduinoSketch(sourceCode: string): {
     'g'
   );
   code = code.replace(arr1dRegex, (_m, rawType, name, len) => {
-    const cleanType = rawType.replace(/\b(?:const|static|volatile|PROGMEM|inline)\b/g, '').trim();
+    const cleanType = rawType.replace(/\b(?:const|constexpr|static|volatile|PROGMEM|inline)\b/g, '').trim();
     if (structNames.has(cleanType)) {
       structArrayVars.add(name);
       return `let ${name} = Array.from({ length: ${len} }, () => __make_${cleanType}());`;
     }
-    return `let ${name} = new Array(${len}).fill(0);`;
+    if (cleanType === 'char') return `let ${name} = new __CharBuffer(${len});`;
+    const { ctor, size } = cppArrayType(rawType);
+    if (ctor) return `let ${name} = new ${ctor}(${len});`;
+    return `let ${name} = __sizedArray(new Array(${len}).fill(0), ${size});`;
   });
 
   // Ensure struct array element assignment `meteors[i] = m;` clones the struct value like C++
@@ -436,6 +533,24 @@ export function transpileArduinoSketch(sourceCode: string): {
     })
   );
 
+  // Preserve C++ integer assignment semantics for initialized scalars. This
+  // matters for screen coordinates such as `int row = y / cellHeight`.
+  const intInitRegex = new RegExp(
+    `(^|[\\n;{}])(\\s*)(${typePattern})\\s+([A-Za-z_]\\w*\\s*=[^;]+);`,
+    'g'
+  );
+  code = replaceOutsideStrings(code, (seg) => seg.replace(
+    intInitRegex, (fullMatch, prefix, indent, rawType: string, declarations: string) => {
+      const type = rawType.replace(/\b(?:const|constexpr|static|volatile|PROGMEM|inline)\b/g, '').trim();
+      if (!/^(?:int|long|short|unsigned(?: int| long| short| char)?|signed(?: char)?|u?int(?:8|16|32)_t|byte|word|size_t)$/.test(type)) return fullMatch;
+      const parts = splitTopLevelCommas(declarations).map((decl) => {
+        const match = decl.trim().match(/^([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/);
+        return match ? `${match[1]} = ${castExpression(type, match[2])}` : decl.trim();
+      });
+      return `${prefix}${indent}let ${parts.join(', ')};`;
+    }
+  ));
+
   const initVarDeclRegex = new RegExp(
     `(^|[\\n;{}])(\\s*)(${typePattern})\\s+(?=[A-Za-z_]\\w*\\s*=)`,
     'g'
@@ -447,10 +562,28 @@ export function transpileArduinoSketch(sourceCode: string): {
     })
   );
 
+  for (const name of unsigned32Vars) {
+    const shift = new RegExp(`\\b${name}\\s*>>(?![>=])`, 'g');
+    const xorAssign = new RegExp(`\\b${name}\\s*\\^=\\s*([^;]+);`, 'g');
+    code = replaceOutsideStrings(code, (seg) => seg
+      .replace(shift, `${name} >>>`)
+      .replace(xorAssign, `${name} = (${name} ^ ($1)) >>> 0;`));
+  }
+
   // 11. Handle sizeof(x), pointer-based touch coordinates: lcd.getTouch(&tx, &ty), and mpu.getEvent(&a, &g, &temp)
   code = replaceOutsideStrings(code, (seg) =>
     seg
-      .replace(/\bsizeof\s*\(\s*([A-Za-z_]\w*)\s*\)/g, '__sizeof($1)')
+      .replace(/\bsizeof\s*\(\s*((?:unsigned\s+(?:char|short|int|long)|signed\s+char|uint8_t|int8_t|uint16_t|int16_t|uint32_t|int32_t|byte|word|size_t|char|short|int|long|float|double|bool)(?:\s*\*)?)\s*\)/g,
+        (_match, type: string) => String(cppArrayType(type).size))
+      .replace(/\bsizeof\s*\(\s*([A-Za-z_]\w*)\s*\[[^\]]+\]\s*\)/g, '__sizeofElement($1)')
+      .replace(/\bsizeof\s*(?:\(\s*([A-Za-z_]\w*)\s*\)|\s+([A-Za-z_]\w*)\b)/g,
+        (_match, parenthesized: string | undefined, bare: string | undefined) => {
+          const name = parenthesized || bare!;
+          const types = numericDeclarations.get(name);
+          const sizes = types ? new Set([...types].map((type) => cppArrayType(type).size)) : null;
+          const size = sizes?.size === 1 ? [...sizes][0] : 4;
+          return `__sizeof(${name}, ${size})`;
+        })
       .replace(
         /\b([A-Za-z_]\w*)\.getTouch\s*\(\s*&\s*([A-Za-z_]\w*)\s*,\s*&\s*([A-Za-z_]\w*)\s*\)/g,
         '($1.getTouch() ? ($2 = $1.getTouchX(), $3 = $1.getTouchY(), true) : false)'
@@ -464,8 +597,8 @@ export function transpileArduinoSketch(sourceCode: string): {
   // 12. Inject low-overhead cooperative loop guard into while(...) and for(...) loops
   code = replaceOutsideStrings(code, (seg) => {
     let s = seg;
-    s = s.replace(/\b(while\s*\([^)]*\)\s*\{)/g, '$1 if ((++__step & 32767) === 0) await __loopTick(); ');
-    s = s.replace(/\b(for\s*\([^)]*\)\s*\{)/g, '$1 if ((++__step & 32767) === 0) await __loopTick(); ');
+    s = s.replace(/\b(while\s*\([^)]*\)\s*\{)/g, '$1 if ((++__step & 32767) === 0) await __cppLoopTick(); ');
+    s = s.replace(/\b(for\s*\([^)]*\)\s*\{)/g, '$1 if ((++__step & 32767) === 0) await __cppLoopTick(); ');
     return s;
   });
 
@@ -482,6 +615,7 @@ export function transpileArduinoSketch(sourceCode: string): {
 
   const headerLines = ['let __step = 0;', ...staticInitializers];
   code = `${headerLines.join('\n')}\n${code}`;
+  code = restoreIntegerDivision(code, numericNames, numericFunctions);
 
   return {
     jsCode: code,
@@ -489,10 +623,230 @@ export function transpileArduinoSketch(sourceCode: string): {
   };
 }
 
+type NumericKind = 'integer' | 'float' | 'ambiguous';
+
+function numericTypeKind(rawType: string): NumericKind | null {
+  const type = rawType.replace(/\b(?:const|constexpr|static|volatile|PROGMEM|inline)\b/g, '').trim();
+  if (type.includes('*') || type.includes('&')) return null;
+  if (/^(?:float|double)$/.test(type)) return 'float';
+  if (/^(?:int|long|long long|short|unsigned(?: int| long| long long| short| char)?|signed(?: char)?|u?int(?:8|16|32|64)_t|byte|word|size_t|char|bool|boolean)$/.test(type)) return 'integer';
+  return null;
+}
+
+interface ExpressionNode extends JavaScriptNode {
+  [key: string]: unknown;
+}
+
+/**
+ * C++ divides two integers with truncation toward zero, even when the result
+ * is then multiplied or added inside a larger expression. Use an AST so that
+ * only integer divisions are wrapped; float divisions keep their precision.
+ */
+function restoreIntegerDivision(
+  code: string,
+  names: Map<string, NumericKind>,
+  functions: Map<string, NumericKind>
+): string {
+  let root: ExpressionNode;
+  try {
+    root = parseJavaScript(code, {
+      ecmaVersion: 'latest',
+      allowAwaitOutsideFunction: true,
+      allowReturnOutsideFunction: true,
+    }) as unknown as ExpressionNode;
+  } catch {
+    // The normal compiler path will report any syntax error to the user.
+    return code;
+  }
+
+  const kind = (node: ExpressionNode | null | undefined): NumericKind | null => {
+    if (!node) return null;
+    switch (node.type) {
+      case 'Literal': {
+        if (typeof node.value !== 'number') return null;
+        return /[.eE]/.test(String(node.raw ?? '')) && !/^0[xX]/.test(String(node.raw ?? '')) ? 'float' : 'integer';
+      }
+      case 'Identifier': return names.get(String(node.name)) ?? null;
+      case 'AwaitExpression': case 'UnaryExpression': case 'UpdateExpression':
+        return kind(node.argument as ExpressionNode);
+      case 'MemberExpression': {
+        if (!node.computed && (node.property as ExpressionNode)?.name === 'length') return 'integer';
+        if (node.computed) return kind(node.object as ExpressionNode);
+        return null;
+      }
+      case 'BinaryExpression': {
+        const operator = String(node.operator);
+        if (/^(?:<<|>>|>>>|&|\||\^|%)$/.test(operator)) return 'integer';
+        if (!/^(?:\+|-|\*|\/)$/.test(operator)) return null;
+        const left = kind(node.left as ExpressionNode);
+        const right = kind(node.right as ExpressionNode);
+        if (left === 'float' || right === 'float') return 'float';
+        return left === 'integer' && right === 'integer' ? 'integer' : null;
+      }
+      case 'ConditionalExpression': {
+        const a = kind(node.consequent as ExpressionNode);
+        const b = kind(node.alternate as ExpressionNode);
+        return a && a === b ? a : null;
+      }
+      case 'CallExpression': {
+        const callee = node.callee as ExpressionNode;
+        if (callee.type === 'Identifier') {
+          const name = String(callee.name);
+          if (/^(?:__sizeof|__sizeofElement|analogRead|digitalRead|millis|micros|random)$/.test(name)) return 'integer';
+          if (/^(?:min|max|abs|constrain)$/.test(name)) {
+            return (node.arguments as ExpressionNode[]).every((arg) => kind(arg) === 'integer') ? 'integer' : null;
+          }
+          return functions.get(name) ?? null;
+        }
+        if (callee.type === 'MemberExpression' &&
+            (callee.object as ExpressionNode)?.name === 'Math' &&
+            /^(?:trunc|floor|ceil|round)$/.test(String((callee.property as ExpressionNode)?.name))) return 'integer';
+        return null;
+      }
+      default: return null;
+    }
+  };
+
+  const insertions = new Map<number, { open: number; close: number }>();
+  const add = (position: number, which: 'open' | 'close') => {
+    const entry = insertions.get(position) ?? { open: 0, close: 0 };
+    entry[which]++;
+    insertions.set(position, entry);
+  };
+  const visit = (node: ExpressionNode): void => {
+    if (node.type === 'BinaryExpression' && node.operator === '/' &&
+        kind(node.left as ExpressionNode) === 'integer' && kind(node.right as ExpressionNode) === 'integer') {
+      add(node.start, 'open');
+      add(node.end, 'close');
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          if (child && typeof child === 'object' && typeof child.type === 'string') visit(child as ExpressionNode);
+        }
+      } else if (value && typeof value === 'object' && typeof (value as ExpressionNode).type === 'string') {
+        visit(value as ExpressionNode);
+      }
+    }
+  };
+  visit(root);
+  let output = '';
+  let last = 0;
+  for (const [position, insertion] of [...insertions.entries()].sort((a, b) => a[0] - b[0])) {
+    output += code.slice(last, position) + ')'.repeat(insertion.close) + 'Math.trunc('.repeat(insertion.open);
+    last = position;
+  }
+  return output + code.slice(last);
+}
+
+function maskStringsAndComments(code: string): string {
+  let mask = '';
+  let i = 0;
+  while (i < code.length) {
+    const start = i;
+    const ch = code[i];
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      i++;
+      while (i < code.length) {
+        if (code[i] === '\\') i += 2;
+        else if (code[i++] === quote) break;
+      }
+    } else if (ch === '/' && code[i + 1] === '/') {
+      i += 2;
+      while (i < code.length && code[i] !== '\n') i++;
+    } else if (ch === '/' && code[i + 1] === '*') {
+      i += 2;
+      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
+      i = Math.min(code.length, i + 2);
+    } else {
+      mask += ch;
+      i++;
+      continue;
+    }
+    mask += code.slice(start, i).replace(/[^\n]/g, ' ');
+  }
+  return mask;
+}
+
+function convertSimplePointers(input: string): string {
+  let code = input;
+  const declaration = /\b(?:(?:const|static)\s+)*(?:uint8_t|int8_t|uint16_t|int16_t|uint32_t|int32_t|byte|word|int|char|float|double)\s*\*\s*(?:const\s+)?([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;/g;
+  const declarations = [...maskStringsAndComments(code).matchAll(declaration)];
+  // Rewrite from the end so earlier declaration offsets remain valid.
+  for (const match of declarations.reverse()) {
+    const start = match.index!;
+    const masked = maskStringsAndComments(code);
+    const blocks: number[] = [];
+    for (let i = 0; i < start; i++) {
+      if (masked[i] === '{') blocks.push(i);
+      else if (masked[i] === '}') blocks.pop();
+    }
+    let end = code.length;
+    if (blocks.length) {
+      let depth = 1;
+      for (let i = blocks[blocks.length - 1] + 1; i < masked.length; i++) {
+        if (masked[i] === '{') depth++;
+        else if (masked[i] === '}' && --depth === 0) { end = i; break; }
+      }
+    }
+    const afterDeclaration = start + match[0].length;
+    const uses = replaceOutsideStrings(code.slice(afterDeclaration, end), (seg) => rewritePointerAccess(seg, match[1]));
+    code = code.slice(0, start) + `let ${match[1]} = { array: ${match[2]}, index: 0 };` + uses + code.slice(end);
+  }
+  return code;
+}
+
+function rewritePointerAccess(segment: string, name: string): string {
+  const deref = new RegExp(`\\*\\s*${name}\\b(\\s*\\+\\+)?`, 'g');
+  segment = segment.replace(deref, (match, increment: string | undefined, offset: number) => {
+    // A star after an expression is multiplication, not a dereference.
+    let prev = offset - 1;
+    while (prev >= 0 && /\s/.test(segment[prev])) prev--;
+    if (prev >= 0 && /[A-Za-z0-9_\])]/.test(segment[prev]) &&
+        !/\breturn\s*$/.test(segment.slice(0, offset))) return match;
+    return `${name}.array[${name}.index${increment ? '++' : ''}]`;
+  });
+  const indexing = new RegExp(`\\b${name}\\s*\\[([^\\]]+)\\]`, 'g');
+  const increment = new RegExp(`\\b${name}\\s*(\\+\\+|--)`, 'g');
+  return segment.replace(indexing, `${name}.array[${name}.index + ($1)]`)
+    .replace(increment, `${name}.index$1`);
+}
+
+function cppArrayType(rawType: string): { ctor: string | null; size: number } {
+  const type = rawType.replace(/\b(?:const|constexpr|static|volatile|PROGMEM|inline)\b/g, '').trim();
+  if (type.includes('*')) return { ctor: null, size: 4 }; // ESP32 pointers
+  switch (type) {
+    case 'char': return { ctor: '__CharBuffer', size: 1 };
+    case 'uint8_t': case 'byte': case 'unsigned char': case 'bool': case 'boolean':
+      return { ctor: 'Uint8Array', size: 1 };
+    case 'int8_t': case 'signed char': return { ctor: 'Int8Array', size: 1 };
+    case 'uint16_t': case 'word': case 'unsigned short': return { ctor: 'Uint16Array', size: 2 };
+    case 'int16_t': case 'short': return { ctor: 'Int16Array', size: 2 };
+    case 'uint32_t': case 'unsigned int': case 'unsigned long': case 'unsigned': case 'size_t':
+      return { ctor: 'Uint32Array', size: 4 };
+    case 'int32_t': case 'int': case 'long': case 'signed': return { ctor: 'Int32Array', size: 4 };
+    case 'float': return { ctor: 'Float32Array', size: 4 };
+    case 'double': return { ctor: 'Float64Array', size: 8 };
+    default: return { ctor: null, size: 4 };
+  }
+}
+
+function castExpression(type: string, expr: string): string {
+  const t = type.trim().replace(/\s+/g, ' ');
+  if (t === 'float' || t === 'double') return `Number(${expr})`;
+  if (t === 'uint8_t' || t === 'byte' || t === 'unsigned char') return `((${expr}) & 0xff)`;
+  if (t === 'uint16_t' || t === 'word' || t === 'unsigned short') return `((${expr}) & 0xffff)`;
+  if (t === 'int8_t' || t === 'signed char') return `(((${expr}) << 24) >> 24)`;
+  if (t === 'int16_t' || t === 'short') return `(((${expr}) << 16) >> 16)`;
+  if (/^(?:uint32_t|unsigned(?: int| long)?|size_t)$/.test(t)) return `((${expr}) >>> 0)`;
+  return `Math.trunc(${expr})`;
+}
+
 function replaceCStyleCasts(input: string): string {
   let s = input.replace(/\(\s*(?:const\s+)?(?:uint8_t|char|byte|void)\s*\*\s*\)/g, '');
   const castRegex =
-    /\(\s*(int|long|short|int8_t|int16_t|int32_t|uint8_t|uint16_t|uint32_t|byte|word|size_t|unsigned\s+int|unsigned\s+long|float|double)\s*\)\s*/g;
+    /\(\s*(unsigned\s+(?:int|long|short|char)|signed\s+char|unsigned|int|long|short|int8_t|int16_t|int32_t|uint8_t|uint16_t|uint32_t|byte|word|size_t|float|double)\s*\)\s*/g;
 
   let result = '';
   let lastIndex = 0;
@@ -501,8 +855,7 @@ function replaceCStyleCasts(input: string): string {
   while ((match = castRegex.exec(s)) !== null) {
     result += s.slice(lastIndex, match.index);
     const castType = match[1];
-    const fn = /^(?:float|double)$/.test(castType) ? 'Number' : 'Math.trunc';
-    let idx = castRegex.lastIndex;
+    const idx = castRegex.lastIndex;
 
     if (s[idx] === '(') {
       // Find matching closing parenthesis so `(int)(a + b * c)` becomes `Math.trunc((a + b * c))`
@@ -514,15 +867,15 @@ function replaceCStyleCasts(input: string): string {
         j++;
       }
       const inner = replaceCStyleCasts(s.slice(idx + 1, j - 1));
-      result += `${fn}(${inner})`;
+      result += castExpression(castType, inner);
       lastIndex = j;
       castRegex.lastIndex = j;
     } else {
       // Match identifier/number/call immediately following the cast: e.g. `(int)rx` or `(float)col`
       const rest = s.slice(idx);
-      const atomMatch = rest.match(/^[A-Za-z0-9_.]+(?:\s*\([^)]*\))?/);
+      const atomMatch = rest.match(/^[-+~!]?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?|[A-Za-z_]\w*(?:(?:\.[A-Za-z_]\w*)|(?:\s*\[[^\]]+\])|(?:\s*\([^()]*\)))*)/);
       if (atomMatch) {
-        result += `${fn}(${atomMatch[0]})`;
+        result += castExpression(castType, atomMatch[0]);
         lastIndex = idx + atomMatch[0].length;
         castRegex.lastIndex = lastIndex;
       } else {
@@ -661,12 +1014,35 @@ function cleanParameterList(rawParams: string, typePattern: string): string {
     .join(', ');
 }
 
+function integerParameterConversions(rawParams: string, typePattern: string): string {
+  const paramRegex = new RegExp(`^(${typePattern})\\s+([A-Za-z_]\\w*)(?:\\s*=.*)?$`);
+  return splitTopLevelCommas(rawParams).map((part) => {
+    const match = part.trim().match(paramRegex);
+    if (!match || /[\[*&]/.test(match[1])) return '';
+    const type = match[1].replace(/\b(?:const|constexpr|static|volatile|inline)\b/g, '').trim();
+    if (!/^(?:int|long|short|unsigned(?: int| long| short| char)?|signed(?: char)?|u?int(?:8|16|32)_t|byte|word|size_t)$/.test(type)) return '';
+    return ` ${match[2]} = ${castExpression(type, match[2])};`;
+  }).join('');
+}
+
 function splitTopLevelCommas(str: string): string[] {
   const res: string[] = [];
   let depth = 0;
   let current = '';
+  let quote = '';
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
+    if (quote) {
+      current += ch;
+      if (ch === '\\' && i + 1 < str.length) current += str[++i];
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
     if (ch === '(' || ch === '[' || ch === '{') depth++;
     else if (ch === ')' || ch === ']' || ch === '}') depth--;
     if (ch === ',' && depth === 0) {
@@ -680,6 +1056,140 @@ function splitTopLevelCommas(str: string): string[] {
   return res;
 }
 
+/** Expand simple expression macros, preserving nested calls and string literals. */
+function expandFunctionMacro(code: string, name: string, params: string[], body: string): string {
+  const invocation = new RegExp(`\\b${name}\\s*\\(`, 'g');
+  // A repeated pass handles nested invocations of the same macro. A cap also
+  // prevents a recursive definition from hanging the editor.
+  for (let pass = 0; pass < 20; pass++) {
+    let changed = false;
+    let out = '';
+    let i = 0;
+    while (i < code.length) {
+      const ch = code[i];
+      if (ch === '"' || ch === "'") {
+        const quote = ch;
+        const start = i++;
+        while (i < code.length) {
+          if (code[i] === '\\') i += 2;
+          else if (code[i++] === quote) break;
+        }
+        out += code.slice(start, i);
+        continue;
+      }
+      if (!code.startsWith(name, i) || (i > 0 && /[A-Za-z0-9_]/.test(code[i - 1]))) {
+        out += ch;
+        i++;
+        continue;
+      }
+      invocation.lastIndex = i;
+      const match = invocation.exec(code);
+      if (!match || match.index !== i) {
+        out += ch;
+        i++;
+        continue;
+      }
+      const argsStart = invocation.lastIndex;
+      let end = argsStart;
+      let depth = 1;
+      let quote = '';
+      while (end < code.length && depth > 0) {
+        const c = code[end++];
+        if (quote) {
+          if (c === '\\') end++;
+          else if (c === quote) quote = '';
+        } else if (c === '"' || c === "'") quote = c;
+        else if (c === '(') depth++;
+        else if (c === ')') depth--;
+      }
+      if (depth !== 0) throw new Error(`Unclosed macro invocation: ${name}`);
+      const rawArgs = code.slice(argsStart, end - 1);
+      const args = rawArgs.trim() ? splitTopLevelCommas(rawArgs) : [];
+      if (args.length !== params.length) {
+        throw new Error(`Macro ${name} expects ${params.length} arguments, got ${args.length}`);
+      }
+      let expanded = body;
+      params.forEach((param, index) => {
+        const paramRegex = new RegExp(`\\b${param}\\b`, 'g');
+        expanded = replaceOutsideStrings(expanded, (segment) =>
+          segment.replace(paramRegex, () => `(${args[index].trim()})`)
+        );
+      });
+      out += `(${expanded})`;
+      i = end;
+      changed = true;
+    }
+    code = out;
+    if (!changed) return code;
+  }
+  throw new Error(`Recursive macro expansion: ${name}`);
+}
+
+// C-style character arrays need both indexed bytes (e.g. buf[0]) and a
+// printable, NUL-terminated string representation for display/Serial APIs.
+class CharBuffer extends Uint8Array {
+  public toString(): string {
+    const nul = this.indexOf(0);
+    return new TextDecoder().decode(this.subarray(0, nul < 0 ? this.length : nul));
+  }
+}
+
+function makeCharBuffer(length: number | null, text: string): CharBuffer {
+  const bytes = new TextEncoder().encode(text);
+  const buffer = new CharBuffer(length === null ? bytes.length + 1 : Math.max(0, Math.trunc(length)));
+  buffer.set(bytes.subarray(0, buffer.length));
+  return buffer;
+}
+
+type SizedArray = unknown[] & { __elementSize?: number };
+
+function sizedArray<T>(array: T[], elementSize: number): T[] {
+  Object.defineProperty(array, '__elementSize', { value: elementSize, configurable: true });
+  return array;
+}
+
+function sizeOf(value: unknown, scalarSize = 4): number {
+  if (ArrayBuffer.isView(value)) return value.byteLength;
+  if (Array.isArray(value)) return value.length * ((value as SizedArray).__elementSize ?? 1);
+  if (typeof value === 'string') return new TextEncoder().encode(value).length + 1;
+  return scalarSize;
+}
+
+function sizeOfElement(value: unknown): number {
+  if (ArrayBuffer.isView(value) && 'BYTES_PER_ELEMENT' in value) return Number(value.BYTES_PER_ELEMENT);
+  if (Array.isArray(value)) return (value as SizedArray).__elementSize ?? 4;
+  return 4;
+}
+
+function memset(destination: unknown, value: number, size: number): unknown {
+  const byte = Number(value) & 0xff;
+  const count = Math.max(0, Math.trunc(Number(size) || 0));
+  if (ArrayBuffer.isView(destination)) {
+    new Uint8Array(destination.buffer, destination.byteOffset, destination.byteLength)
+      .fill(byte, 0, Math.min(count, destination.byteLength));
+  } else if (Array.isArray(destination)) {
+    // Untyped arrays mainly represent pointers/structs. Byte arrays are the
+    // useful memset case; numeric typed arrays above retain byte-exact behavior.
+    destination.fill(byte, 0, Math.min(count, destination.length));
+  }
+  return destination;
+}
+
+function writeFormattedBuffer(buffer: unknown, size: number, text: string): number {
+  const bytes = new TextEncoder().encode(text);
+  const capacity = Math.max(0, Math.trunc(Number(size) || 0));
+  if ((ArrayBuffer.isView(buffer) && 'length' in buffer) || Array.isArray(buffer)) {
+    const dst = buffer as unknown as { length: number; [index: number]: number };
+    const writable = Math.min(capacity, dst.length);
+    if (writable > 0) {
+      const count = Math.min(bytes.length, writable - 1);
+      for (let i = 0; i < count; i++) dst[i] = bytes[i];
+      dst[count] = 0;
+    }
+  }
+  return bytes.length;
+}
+
 function formatPrintf(fmt: string, args: unknown[]): string {
   let argIdx = 0;
   return String(fmt).replace(/%(-?\d+)?(?:\.(\d+))?([diuoxXfsc%])/g, (_match, width, prec, spec) => {
@@ -689,8 +1199,10 @@ function formatPrintf(fmt: string, args: unknown[]): string {
     switch (spec) {
       case 'd':
       case 'i':
-      case 'u':
         out = String(Math.trunc(Number(val) || 0));
+        break;
+      case 'u':
+        out = String(Math.trunc(Number(val) || 0) >>> 0);
         break;
       case 'x':
         out = (Math.trunc(Number(val) || 0) >>> 0).toString(16);
@@ -755,21 +1267,19 @@ export class ArduinoSketchVM {
           reject(new Error('__ABORTED__'));
           return;
         }
-        const t = setTimeout(() => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error('__ABORTED__'));
+        };
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
           if (!this.running || signal.aborted || !cb.isRunning()) {
             reject(new Error('__ABORTED__'));
           } else {
             resolve();
           }
         }, Math.max(0, ms));
-        signal.addEventListener(
-          'abort',
-          () => {
-            clearTimeout(t);
-            reject(new Error('__ABORTED__'));
-          },
-          { once: true }
-        );
+        signal.addEventListener('abort', onAbort, { once: true });
       });
 
     const __loopTick = async () => {
@@ -856,14 +1366,26 @@ export class ArduinoSketchVM {
         color: number,
         bg?: number
       ) => disp.drawBitmap(x, y, bitmap, w, h, color, bg),
-      pushImage: (x: number, y: number, w: number, h: number, data: number[]) =>
+      pushImage: (x: number, y: number, w: number, h: number, data: ArrayLike<number>) =>
         disp.pushImage(x, y, w, h, data),
       color565: (r: number, g: number, b: number) => disp.color565(r, g, b),
       width: () => disp.width(),
       height: () => disp.height(),
       invertDisplay: (i: boolean) => disp.invertDisplay(i),
       setPsram: (b: boolean) => disp.setPsram(b),
+      // The simulated framebuffer already receives native RGB565 values.
+      setSwapBytes: (_swap: boolean) => {},
       setColorDepth: (_bits: number) => {},
+      // Browser pointer coordinates are already mapped to display pixels, so
+      // no physical XPT2046 calibration is necessary in the emulator.
+      calibrateTouch: (calibration: Uint16Array | number[]) => {
+        if (calibration) {
+          const values = [0, 0, 319, 0, 0, 239, 319, 239];
+          for (let i = 0; i < Math.min(calibration.length, values.length); i++) calibration[i] = values[i];
+        }
+        cb.onSerialPrint(0, '[Emulator] Touch coordinates are already calibrated.\n');
+      },
+      setTouchCalibrate: (_calibration: Uint16Array | number[]) => {},
       createSprite: (w = 320, h = 240) => disp.createSprite(w, h),
       deleteSprite: () => {},
       pushSprite: (x = 0, y = 0) => disp.pushSprite(x, y),
@@ -1253,6 +1775,17 @@ export class ArduinoSketchVM {
       getTemperature: () => getGyroAccel().temp,
     };
 
+    let analogResolution = 12;
+    const makeTypedArray = (
+      ctor: new (size: number) => Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array,
+      length: number | null,
+      values: number[]
+    ) => {
+      const result = new ctor(length === null ? values.length : Math.max(0, Math.trunc(length)));
+      result.set(values.slice(0, result.length));
+      return result;
+    };
+
     const env: Record<string, unknown> = {
       HIGH: 1,
       LOW: 0,
@@ -1288,7 +1821,13 @@ export class ArduinoSketchVM {
       digitalWrite: (pin: number, val: number | boolean) =>
         cb.onDigitalWrite(Number(pin), val ? 1 : 0),
       digitalRead: (pin: number) => cb.onDigitalRead(Number(pin)),
-      analogRead: (pin: number) => cb.onAnalogRead(Number(pin)),
+      analogReadResolution: (bits: number) => {
+        analogResolution = Math.max(1, Math.min(16, Math.trunc(Number(bits)) || 12));
+      },
+      analogRead: (pin: number) => {
+        const value = cb.onAnalogRead(Number(pin));
+        return analogResolution <= 12 ? value >> (12 - analogResolution) : value << (analogResolution - 12);
+      },
       analogWrite: (pin: number, val: number) => cb.onAnalogWrite(Number(pin), Number(val)),
       dacWrite: (pin: number, val: number) => cb.onAnalogWrite(Number(pin), Number(val) * 16),
       tone: (pin: number, freq: number, duration?: number) =>
@@ -1316,6 +1855,9 @@ export class ArduinoSketchVM {
         await sleepMs(1);
       },
       __loopTick,
+      // The C++ guard runs only every 32768 iterations. Yield to the browser
+      // each time so large simulations remain responsive and can be stopped.
+      __cppLoopTick: async () => { await sleepMs(0); },
 
       min: Math.min,
       max: Math.max,
@@ -1362,7 +1904,19 @@ export class ArduinoSketchVM {
         }
         return String(val ?? '');
       },
-      __sizeof: (v: unknown) => (Array.isArray(v) ? v.length : typeof v === 'string' ? v.length : 4),
+      __sizeof: sizeOf,
+      __sizeofElement: sizeOfElement,
+      __sizedArray: sizedArray,
+      __makeTypedArray: makeTypedArray,
+      __CharBuffer: CharBuffer,
+      __makeCharBuffer: makeCharBuffer,
+      memset,
+      strlen: (value: unknown) => new TextEncoder().encode(String(value ?? '').split('\0')[0]).length,
+      __Preferences: class extends SimulatedPreferences {
+        constructor() { super(cb.boardId); }
+      },
+      // Informational estimates, not measurements of ESP32 hardware memory.
+      ESP: { getFreeHeap: () => 200 * 1024, getFreePsram: () => 4 * 1024 * 1024 },
       __cloneStruct: <T>(obj: T): T => {
         if (!obj || typeof obj !== 'object') return obj;
         const copy: Record<string, unknown> = {};
@@ -1376,20 +1930,10 @@ export class ArduinoSketchVM {
         boundLeds = arr;
         return arr;
       },
-      snprintf: (_buf: unknown, _size: number, fmt: string, ...args: unknown[]) => {
-        const s = formatPrintf(fmt, args);
-        if (_buf && typeof _buf === 'object') {
-          (_buf as { toString: () => string }).toString = () => s;
-        }
-        return s.length;
-      },
-      sprintf: (_buf: unknown, fmt: string, ...args: unknown[]) => {
-        const s = formatPrintf(fmt, args);
-        if (_buf && typeof _buf === 'object') {
-          (_buf as { toString: () => string }).toString = () => s;
-        }
-        return s.length;
-      },
+      snprintf: (buffer: unknown, size: number, fmt: string, ...args: unknown[]) =>
+        writeFormattedBuffer(buffer, size, formatPrintf(fmt, args)),
+      sprintf: (buffer: unknown, fmt: string, ...args: unknown[]) =>
+        writeFormattedBuffer(buffer, sizeOf(buffer), formatPrintf(fmt, args)),
       atoi: (s: unknown) => parseInt(String(s), 10) || 0,
       atof: (s: unknown) => parseFloat(String(s)) || 0,
 
@@ -1483,10 +2027,14 @@ export class ArduinoSketchVM {
               this.espNowRecvCb(macBytes, pkt.payload, pkt.payload.length);
             }
           }
+          const loopStarted = Date.now();
           if (hooks.loop) {
             await hooks.loop();
           }
-          await sleepMs(16);
+          // A sketch may already spend most of a frame in delay() or drawing.
+          // Only add the remainder of the 16 ms scheduling interval instead of
+          // slowing every sketch by an extra 16 ms after its own delay.
+          await sleepMs(Math.max(0, 16 - (Date.now() - loopStarted)));
         }
       } catch (err) {
         if (err instanceof Error && err.message === '__ABORTED__') {

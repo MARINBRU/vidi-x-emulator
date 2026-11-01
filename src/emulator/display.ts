@@ -637,7 +637,7 @@ export class ILI9341Display {
     }
   }
 
-  public pushImage(x: number, y: number, w: number, h: number, data: number[]): void {
+  public pushImage(x: number, y: number, w: number, h: number, data: ArrayLike<number>): void {
     let idx = 0;
     for (let j = 0; j < h; j++) {
       for (let i = 0; i < w; i++) {
