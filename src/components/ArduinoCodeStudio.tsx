@@ -418,7 +418,7 @@ export const ArduinoCodeStudio: React.FC<ArduinoCodeStudioProps> = ({
         {state.compileError && (
           <div className="px-3 py-2 bg-rose-950/90 border-b border-rose-500/60 text-rose-200 text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span className="select-text">{state.compileError}</span>
+            <span className="select-text min-w-0 break-words">{state.compileError}</span>
           </div>
         )}
 

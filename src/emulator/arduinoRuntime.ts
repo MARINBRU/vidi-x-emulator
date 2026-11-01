@@ -351,6 +351,12 @@ export function transpileArduinoSketch(sourceCode: string): {
   ];
   const typePattern = `(?:(?:const|constexpr|static|volatile|PROGMEM|inline)\\s+)*(?:${baseTypes.join('|')})(?:\\s*\\*+\\s*(?:const\\s*)?)?`;
 
+  // C++ permits `const char *name` as well as `const char* name`.
+  // The declaration converters below require a separator after the type;
+  // normalize an identifier immediately following pointer stars first.
+  const pointerSpacing = new RegExp(`\\b(${baseTypes.join('|')})(\\s*\\*+)(?=[A-Za-z_])`, 'g');
+  code = replaceOutsideStrings(code, (seg) => seg.replace(pointerSpacing, '$1$2 '));
+
   // Keep conservative numeric type information for C++ integer division. If
   // a name is used for both an integer and a float in different scopes, leave
   // its divisions alone rather than changing floating-point behavior.
@@ -737,6 +743,23 @@ function restoreIntegerDivision(
     last = position;
   }
   return output + code.slice(last);
+}
+
+// `new Function` normally reports no location for a syntax error. Parse the
+// same generated body only on failure and expose a short translated-code
+// excerpt. It is not an original sketch line number: the translator changes
+// line positions, so labelling it as one would send users to the wrong place.
+function translatedSyntaxContext(body: string): string {
+  try {
+    parseJavaScript(body, { ecmaVersion: 'latest', allowReturnOutsideFunction: true });
+  } catch (error) {
+    const loc = (error as { loc?: { line: number } }).loc;
+    if (loc?.line) {
+      const line = body.split('\n')[loc.line - 1]?.trim();
+      if (line) return ` Near translated code: ${line.length > 180 ? `${line.slice(0, 180)}…` : line}`;
+    }
+  }
+  return '';
 }
 
 function maskStringsAndComments(code: string): string {
@@ -2004,7 +2027,10 @@ export class ArduinoSketchVM {
       hooks = factory(...envValues);
     } catch (err) {
       this.running = false;
-      onError(`Syntax / Compile Error: ${err instanceof Error ? err.message : String(err)}`);
+      const detail = err instanceof SyntaxError && !isPythonCode(sketchCode)
+        ? translatedSyntaxContext(runnerBody)
+        : '';
+      onError(`Syntax / Compile Error: ${err instanceof Error ? err.message : String(err)}${detail}`);
       return false;
     }
 

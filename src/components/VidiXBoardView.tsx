@@ -878,7 +878,7 @@ export const VidiXBoardView: React.FC<VidiXBoardViewProps> = ({
 
       {/* Compile / Runtime Error Strip */}
       {state.compileError && (
-        <div className="px-3 py-1.5 bg-rose-950 border-t border-rose-700 text-rose-200 text-[11px] font-mono">
+        <div className="px-3 py-1.5 bg-rose-950 border-t border-rose-700 text-rose-200 text-[11px] font-mono break-words select-text">
           {state.compileError}
         </div>
       )}
